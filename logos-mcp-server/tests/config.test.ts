@@ -47,10 +47,10 @@ describe("config", () => {
 
     const config = await import("../src/config.js");
 
-    expect(config.LOGOS_DATA_DIR).toBe(
+    expect(config.getLogosDataDir()).toBe(
       join("C:\\Users\\tester\\AppData\\Local", "Logos", "Documents", "abc123")
     );
-    expect(config.LOGOS_CATALOG_DIR).toBe(
+    expect(config.getLogosCatalogDir()).toBe(
       join("C:\\Users\\tester\\AppData\\Local", "Logos", "Data", "xyz789")
     );
   });
@@ -64,10 +64,10 @@ describe("config", () => {
 
     const config = await import("../src/config.js");
 
-    expect(config.LOGOS_DATA_DIR).toBe(
+    expect(config.getLogosDataDir()).toBe(
       join("/Users/tester", "Library", "Application Support", "Logos4", "Documents", "docs-hash")
     );
-    expect(config.LOGOS_CATALOG_DIR).toBe(
+    expect(config.getLogosCatalogDir()).toBe(
       join("/Users/tester", "Library", "Application Support", "Logos4", "Data", "data-hash")
     );
   });
@@ -79,9 +79,47 @@ describe("config", () => {
 
     const config = await import("../src/config.js");
 
-    expect(config.LOGOS_DATA_DIR).toBe("C:\\custom\\documents\\hash");
-    expect(config.LOGOS_CATALOG_DIR).toBe("C:\\custom\\data\\hash");
+    expect(config.getLogosDataDir()).toBe("C:\\custom\\documents\\hash");
+    expect(config.getLogosCatalogDir()).toBe("C:\\custom\\data\\hash");
     expect(readdirSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("imports without error even when Logos is not installed", async () => {
+    platformMock.mockReturnValue("darwin");
+    readdirSyncMock.mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    });
+
+    const config = await import("../src/config.js");
+
+    expect(config.SERVER_NAME).toBe("logos-bible");
+    expect(readdirSyncMock).not.toHaveBeenCalled();
+    expect(() => config.getLogosDataDir()).toThrow(/Is Logos Bible Software installed.*LOGOS_DATA_DIR/s);
+    expect(() => config.getCatalogDbPath()).toThrow(/LOGOS_CATALOG_DIR/);
+  });
+
+  it("memoizes resolved directories across calls", async () => {
+    platformMock.mockReturnValue("darwin");
+    readdirSyncMock.mockReturnValue([dirEntry("only-hash")]);
+
+    const config = await import("../src/config.js");
+
+    config.getLogosDataDir();
+    config.getLogosDataDir();
+
+    expect(readdirSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds all Documents database paths from the resolved data dir", async () => {
+    platformMock.mockReturnValue("darwin");
+    readdirSyncMock.mockReturnValue([dirEntry("only-hash")]);
+
+    const config = await import("../src/config.js");
+    const paths = config.getDbPaths();
+    const base = join("/Users/tester", "Library", "Application Support", "Logos4", "Documents", "only-hash");
+
+    expect(paths.notes).toBe(join(base, "NotesToolManager", "notestool.db"));
+    expect(paths.visualMarkup).toBe(join(base, "VisualMarkup", "visualmarkup.db"));
   });
 
   it("throws a clear error when no Logos user folder exists", async () => {
@@ -89,9 +127,9 @@ describe("config", () => {
     vi.stubEnv("LOCALAPPDATA", "C:\\Users\\tester\\AppData\\Local");
     readdirSyncMock.mockReturnValue([]);
 
-    await expect(import("../src/config.js")).rejects.toThrow(
-      /No Logos user folders found/
-    );
+    const config = await import("../src/config.js");
+
+    expect(() => config.getLogosDataDir()).toThrow(/No Logos user folders found/);
   });
 
   it("selects the uniquely matching Documents folder when multiple hashes exist", async () => {
@@ -106,7 +144,7 @@ describe("config", () => {
 
     const config = await import("../src/config.js");
 
-    expect(config.LOGOS_DATA_DIR).toBe(
+    expect(config.getLogosDataDir()).toBe(
       join("C:\\Users\\tester\\AppData\\Local", "Logos", "Documents", "active-hash")
     );
   });
@@ -117,8 +155,8 @@ describe("config", () => {
     readdirSyncMock.mockReturnValue([dirEntry("hash-one"), dirEntry("hash-two")]);
     existsSyncMock.mockReturnValue(true);
 
-    await expect(import("../src/config.js")).rejects.toThrow(
-      /Could not uniquely determine/
-    );
+    const config = await import("../src/config.js");
+
+    expect(() => config.getLogosDataDir()).toThrow(/Could not uniquely determine/);
   });
 });

@@ -80,6 +80,10 @@ for (const [full, abbr] of Object.entries(BOOK_TO_LOGOS)) {
 
 // Common abbreviation aliases -> canonical full name
 const ALIAS_TO_BOOK: Record<string, string> = {
+  "Song of Songs": "Song of Solomon",
+  "Canticles": "Song of Solomon",
+  "Eccles": "Ecclesiastes",
+  "Ecc": "Ecclesiastes",
   "Gen": "Genesis",
   "Exod": "Exodus",
   "Lev": "Leviticus",
@@ -166,10 +170,26 @@ const SINGLE_CHAPTER_BOOKS = new Set([
 // ─── Helper: resolve book name ──────────────────────────────────────────────
 
 function resolveBookName(input: string): string | null {
-  const trimmed = input.trim();
-  // Try exact match first (case-insensitive)
-  const direct = NAME_LOOKUP.get(trimmed.toLowerCase());
-  if (direct) return direct;
+  const normalized = input.trim().replace(/\s+/g, " ").toLowerCase();
+
+  const candidates = [normalized];
+
+  // "1 sam" -> "1sam" (aliases are stored without the space)
+  const numberedMatch = normalized.match(/^([123])\s+(.+)$/);
+  if (numberedMatch) {
+    candidates.push(`${numberedMatch[1]}${numberedMatch[2]}`);
+  }
+
+  // "1samuel" -> "1 samuel" (canonical names are stored with the space)
+  const fusedMatch = normalized.match(/^([123])([a-z].*)$/);
+  if (fusedMatch) {
+    candidates.push(`${fusedMatch[1]} ${fusedMatch[2]}`);
+  }
+
+  for (const candidate of candidates) {
+    const resolved = NAME_LOOKUP.get(candidate);
+    if (resolved) return resolved;
+  }
   return null;
 }
 
@@ -291,6 +311,82 @@ export function toBibliaRef(input: string): string {
   return result;
 }
 
+// ─── formatReference / canonicalizeReference ────────────────────────────────
+
+/** Format a parsed reference back into standard human-readable form. */
+export function formatReference(ref: ParsedReference): string {
+  let result = `${ref.book} ${ref.chapter}`;
+
+  if (ref.verse !== undefined) {
+    result += `:${ref.verse}`;
+  }
+
+  if (ref.endChapter !== undefined) {
+    if (ref.endVerse !== undefined) {
+      result += ref.endChapter === ref.chapter
+        ? `-${ref.endVerse}`
+        : `-${ref.endChapter}:${ref.endVerse}`;
+    } else if (ref.endChapter !== ref.chapter) {
+      result += `-${ref.endChapter}`;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Normalize any parseable reference to canonical human-readable form
+ * ("Rom 8:28" -> "Romans 8:28"). Returns null for unparseable input so
+ * callers can fall back to raw-string comparison.
+ */
+export function canonicalizeReference(input: string): string | null {
+  try {
+    return formatReference(parseReference(input));
+  } catch {
+    return null;
+  }
+}
+
+// ─── Bible datatype book numbers ────────────────────────────────────────────
+// Logos "bible" datatype references number the 66-book Protestant canon in
+// order (1 = Genesis ... 24 = Jeremiah ... 66 = Revelation), e.g. "bible.24.1.1".
+
+const BOOKS_IN_ORDER = Object.keys(BOOK_TO_LOGOS);
+
+export function bookNameFromNumber(bookNumber: number): string | null {
+  return BOOKS_IN_ORDER[bookNumber - 1] ?? null;
+}
+
+export function bookNumberFromName(book: string): number | null {
+  const index = BOOKS_IN_ORDER.indexOf(book);
+  return index === -1 ? null : index + 1;
+}
+
+/**
+ * Convert a human-readable reference to a Logos bible milestone
+ * ("Jeremiah 1:1" -> "bible.24.1.1"), the format open_resource expects.
+ * Chapter-only references become "bible.N.C"; ranges repeat the book number.
+ */
+export function toBibleMilestone(input: string): string {
+  const ref = parseReference(input);
+  const bookNumber = bookNumberFromName(ref.book);
+  if (bookNumber === null) {
+    throw new Error(`No bible milestone book number for: "${ref.book}"`);
+  }
+
+  let result = `bible.${bookNumber}.${ref.chapter}`;
+  if (ref.verse !== undefined) {
+    result += `.${ref.verse}`;
+  }
+  if (ref.endChapter !== undefined && (ref.endChapter !== ref.chapter || ref.endVerse !== undefined)) {
+    result += `-${bookNumber}.${ref.endChapter}`;
+    if (ref.endVerse !== undefined) {
+      result += `.${ref.endVerse}`;
+    }
+  }
+  return result;
+}
+
 // ─── toHumanReadable ────────────────────────────────────────────────────────
 
 export function toHumanReadable(logosRef: string): string {
@@ -314,30 +410,13 @@ export function toHumanReadable(logosRef: string): string {
     throw new Error(`Unknown Logos abbreviation: "${abbr}"`);
   }
 
-  const chapter = match[3];
-  const verse = match[4];
-  const endChapter = match[5];
-  const endVerse = match[6];
-
-  let result = `${book} ${chapter}`;
-
-  if (verse !== undefined) {
-    result += `:${verse}`;
-  }
-
-  if (endChapter !== undefined) {
-    if (endVerse !== undefined) {
-      if (endChapter !== chapter) {
-        result += `-${endChapter}:${endVerse}`;
-      } else {
-        result += `-${endVerse}`;
-      }
-    } else {
-      result += `-${endChapter}`;
-    }
-  }
-
-  return result;
+  return formatReference({
+    book,
+    chapter: parseInt(match[3], 10),
+    verse: match[4] ? parseInt(match[4], 10) : undefined,
+    endChapter: match[5] ? parseInt(match[5], 10) : undefined,
+    endVerse: match[6] ? parseInt(match[6], 10) : undefined,
+  });
 }
 
 // ─── expandRange ────────────────────────────────────────────────────────────

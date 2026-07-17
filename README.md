@@ -6,7 +6,9 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 
 ## What This Does
 
-- **22 MCP tools** that let your AI assistant read Bible text, search Scripture, navigate Logos, access your notes/highlights/favorites, check reading plans, explore word studies and factbook entries, search your library catalog, open commentaries and lexicons, run cross-resource searches, and read text from open resource panels
+- **26 MCP tools** that let your AI assistant read and compare Bible text, search Scripture, look up curated cross-references, navigate Logos, access your notes/highlights/favorites/clippings/passage lists, check reading plans, explore word studies and factbook entries, search your library catalog, open commentaries and lexicons, run cross-resource searches, and read text from open resource panels
+- **3 MCP prompts** (`socratic-study`, `word-study`, `passage-overview`) — guided study workflows available from any MCP client that supports prompts
+- **MCP resources** exposing your Logos notebooks (`logos://notebooks/{id}`) so a whole notebook can be pulled into context at once
 - **A Socratic Bible Study agent** (Claude Code only) that guides you through Scripture using questions (not lectures), welcoming any denominational background, with four questioning layers: Observation, Interpretation, Correlation, and Application
 
 ## Tool Requirements
@@ -14,8 +16,10 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 | Tool group | Requires Logos desktop data | Requires Logos UI | Requires `BIBLIA_API_KEY` |
 |------------|-----------------------------|-------------------|---------------------------|
 | `navigate_passage`, `open_word_study`, `open_factbook`, `open_resource`, `open_guide`, `search_all` | No | Yes | No |
-| `get_user_notes`, `get_user_highlights`, `get_favorites`, `get_reading_progress`, `get_study_workflows`, `get_library_catalog`, `get_resource_types`, `get_resource_references` | Yes | No | No |
-| `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, `scan_references` | No | No | Yes |
+| `get_user_notes`, `get_user_highlights`, `get_favorites`, `get_clippings`, `get_passage_lists`, `get_reading_progress`, `get_todays_reading`, `get_study_workflows`, `get_library_catalog`, `get_resource_types`, `get_resource_references` | Yes | No | No |
+| `get_bible_text`, `get_passage_context`, `search_bible`, `compare_passages`, `get_available_bibles`, `scan_references` | No | No | Yes |
+| `get_cross_references` | No | No | Only as fallback (see [Cross-reference dataset](#cross-reference-dataset-optional)) |
+| `normalize_reference` | No | No | No |
 | `get_resource_text` | No | Yes | No |
 
 ## Prerequisites
@@ -33,8 +37,8 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/robrawks/LogosInteraction.git
-cd LogosInteraction
+git clone https://github.com/CyberCwby/LogosBibleSoftwareMCP.git
+cd LogosBibleSoftwareMCP
 ```
 
 ### 2. Install dependencies and build
@@ -56,7 +60,7 @@ cd ..
 
 Choose your client below. Each needs the path to the built server and your Biblia API key.
 
-> **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosInteraction` with your actual project path.
+> **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosBibleSoftwareMCP` with your actual project path.
 
 <details>
 <summary><strong>Claude Code</strong></summary>
@@ -77,7 +81,7 @@ Create `.mcp.json` in the project root:
 }
 ```
 
-Verify: run `claude`, then type `/mcp` to check that the "logos" server appears with 22 tools.
+Verify: run `claude`, then type `/mcp` to check that the "logos" server appears with 26 tools.
 
 </details>
 
@@ -98,7 +102,7 @@ Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosBibleSoftwareMCP\\logos-mcp-server\\dist\\index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -114,7 +118,7 @@ Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "args": ["/Users/YOUR_USER/path/to/LogosBibleSoftwareMCP/logos-mcp-server/dist/index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -124,7 +128,7 @@ Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
 ```
 
 5. Save the file — LM Studio will auto-load the server
-6. The 22 tools will appear when you start a chat with a tool-capable model
+6. The 26 tools will appear when you start a chat with a tool-capable model
 
 The `mcp.json` file lives at:
 - **macOS/Linux:** `~/.lmstudio/mcp.json`
@@ -175,7 +179,7 @@ Add (or merge into existing config):
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosBibleSoftwareMCP\\logos-mcp-server\\dist\\index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -191,7 +195,7 @@ Add (or merge into existing config):
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "args": ["/Users/YOUR_USER/path/to/LogosBibleSoftwareMCP/logos-mcp-server/dist/index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -251,10 +255,11 @@ Tools for retrieving, reading, and comparing Bible text
 
 | Tool | What it does |
 |------|-------------|
-| `get_bible_text` | Retrieves passage text (LEB default; also KJV, ASV, DARBY, YLT, WEB) |
+| `get_bible_text` | Retrieves passage text (LEB default; also KJV, ASV, DARBY, YLT, WEB) — pass `bibles: ["LEB", "KJV"]` to compare translations side by side |
 | `get_passage_context` | Gets a passage with surrounding verses for context |
 | `compare_passages` | Compares two Bible references for overlap, subset, or ordering |
 | `get_available_bibles` | Lists all Bible versions available for text retrieval |
+| `normalize_reference` | Validates a reference and returns it in every format the other tools accept (canonical, Logos URL, Biblia, bible milestone) |
 
 ### Navigation & UI
 Tools that open things in the Logos desktop app
@@ -264,7 +269,7 @@ Tools that open things in the Logos desktop app
 | `navigate_passage` | Opens a passage in the Logos UI |
 | `open_word_study` | Opens a word study in Logos (Greek/Hebrew/English) |
 | `open_factbook` | Opens a Factbook entry for a person, place, event, or topic |
-| `open_resource` | Opens a specific commentary, lexicon, or other resource in Logos at a passage |
+| `open_resource` | Opens a specific commentary, lexicon, or other resource in Logos — accepts normal Bible references ("Jeremiah 1:1") or Logos milestones ("page.271") |
 | `open_guide` | Opens an Exegetical Guide or Passage Guide for a Bible passage |
 
 ### Search & Discovery
@@ -273,43 +278,20 @@ Tools for searching Bible text and library resources
 | Tool | What it does |
 |------|-------------|
 | `search_bible` | Searches Bible text for words, phrases, or topics |
-| `get_cross_references` | Finds related passages by extracting key terms |
+| `get_cross_references` | Returns curated cross-references from the openbible.info dataset (see below); falls back to Biblia keyword search |
 | `scan_references` | Finds Bible references embedded in arbitrary text |
 | `search_all` | Searches across ALL resources in your library (not just Bible text) |
 
-## Troubleshooting
+#### Cross-reference dataset (optional)
 
-### Windows: `search_all` or `open_guide` fails with a shell syntax error
+`get_cross_references` works best with the curated [openbible.info cross-references](https://www.openbible.info/labs/cross-references/) dataset (~340,000 community-voted verse links, Creative Commons Attribution license). Download it once:
 
-Symptoms often look like Windows trying to interpret part of a Logos URL query string as a command, especially when the URL contains multiple query parameters.
+```bash
+cd logos-mcp-server
+npm run fetch-xrefs
+```
 
-Checks:
-
-1. Rebuild the server with `npm run build` so your MCP client is using the latest launcher logic.
-2. Confirm Logos is installed and the `logos4:` protocol is still registered on Windows.
-3. Retry a simple UI tool such as `open_factbook` or `navigate_passage` to confirm the protocol handler works at all.
-
-### Biblia-backed tools return 403 or authentication failures
-
-Affected tools include `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, and `scan_references`.
-
-Checks:
-
-1. Confirm `BIBLIA_API_KEY` is present in your MCP client configuration.
-2. Restart the MCP client after editing the environment variables.
-3. Verify the key is still valid at [bibliaapi.com](https://bibliaapi.com/).
-4. If you hit rate limits, wait and retry instead of repeatedly sending the same request.
-
-### `get_library_catalog` returns no matches
-
-The library catalog tool searches your local Logos `catalog.db` directly. Zero results do not necessarily mean Logos needs to rebuild an index.
-
-Try:
-
-1. Broader keywords before combining multiple filters.
-2. An author-only search to confirm the database is being read.
-3. A type filter such as `commentary`, `lexicon`, or `dictionary`.
-4. Setting `LOGOS_CATALOG_DIR` explicitly if your Logos data is installed in a non-default location.
+This writes `logos-mcp-server/data/cross-references.tsv.gz` (~2 MB). With the dataset in place, cross-references are offline, instant, and need no API key. Without it, the tool falls back to keyword search through the Biblia API.
 
 ### Library & Resources
 Tools for browsing your owned library catalog
@@ -328,10 +310,13 @@ Tools for accessing your notes, highlights, favorites, and reading progress
 
 | Tool | What it does |
 |------|-------------|
-| `get_user_notes` | Reads your study notes from Logos |
-| `get_user_highlights` | Reads your highlights and visual markup |
+| `get_user_notes` | Reads your study notes with anchored Bible references; filter by notebook, reference (e.g., "Romans 8"), or full-text `query` |
+| `get_user_highlights` | Reads your highlights as Bible references; filter by resource, style, or reference — or set `group_by` for a count summary |
 | `get_favorites` | Lists your saved favorites/bookmarks |
+| `get_clippings` | Reads your saved clippings (excerpts collected from resources) |
+| `get_passage_lists` | Reads your passage lists (curated collections of Bible references) |
 | `get_reading_progress` | Shows your reading plan status |
+| `get_todays_reading` | Shows the next unread items in each active reading plan |
 
 ### Study Workflows
 Tools for structured study paths
@@ -339,6 +324,13 @@ Tools for structured study paths
 | Tool | What it does |
 |------|-------------|
 | `get_study_workflows` | Lists available study workflow templates and active instances |
+
+## MCP Prompts & Resources
+
+Beyond tools, the server exposes:
+
+- **Prompts** — guided study workflows any prompt-capable MCP client can invoke: `socratic-study` (four-layer Socratic dialogue on a passage), `word-study` (original-language word survey), and `passage-overview` (quick orientation: text, context, cross-references, and your own study data)
+- **Resources** — your Logos notebooks, listed under `logos://notebooks/{id}`; reading one returns every note in the notebook as markdown, so a whole notebook can be pulled into context in one step
 
 ## Using the Socratic Bible Study Agent (Claude Code only)
 
@@ -365,7 +357,7 @@ The agent will ask what you want to study and guide you through Scripture using 
 ## Project Structure
 
 ```
-LogosInteraction/
+LogosBibleSoftwareMCP/
 ├── .claude/
 │   └── agents/
 │       └── socratic-bible-study.md    # Socratic agent definition (Claude Code)
@@ -373,25 +365,35 @@ LogosInteraction/
 ├── .vscode/
 │   └── mcp.json                       # VS Code + Copilot MCP config (you create this)
 ├── .env                               # API key (you create this)
+├── LICENSE
 ├── logos-mcp-server/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
-│   │   ├── index.ts                   # MCP server entry point (22 tools)
-│   │   ├── config.ts                  # Paths, API config, constants
+│   │   ├── index.ts                   # MCP server entry point (26 tools, prompts, resources)
+│   │   ├── config.ts                  # Lazy path resolution, API config, constants
 │   │   ├── types.ts                   # Shared TypeScript types
-│   │   └── services/
-│   │       ├── reference-parser.ts    # Bible reference normalization
-│   │       ├── biblia-api.ts          # Biblia.com REST API client
-│   │       ├── logos-app.ts           # Cross-platform URL scheme & process detection
-│   │       ├── sqlite-reader.ts       # Read-only Logos SQLite access
-│   │       └── catalog-reader.ts     # Library catalog search (catalog.db)
+│   │   ├── services/
+│   │   │   ├── reference-parser.ts    # Bible reference normalization
+│   │   │   ├── biblia-api.ts          # Biblia.com REST API client
+│   │   │   ├── cross-references.ts    # Curated cross-reference dataset lookup
+│   │   │   ├── logos-app.ts           # Cross-platform URL scheme & process detection
+│   │   │   ├── sqlite-reader.ts       # Read-only Logos SQLite access
+│   │   │   ├── catalog-reader.ts      # Library catalog search (catalog.db)
+│   │   │   └── ui-automation-reader.ts # Windows UI Automation text scraping (experimental)
+│   │   └── utils/
+│   │       ├── strip-markup.ts        # XML / rich-text stripping helpers
+│   │       └── bible-anchors.ts       # Parse Bible references from note/highlight anchors
+│   ├── scripts/
+│   │   └── fetch-cross-references.mjs # Downloads the openbible.info dataset (npm run fetch-xrefs)
+│   ├── data/                          # Generated cross-reference dataset (gitignored)
+│   ├── tests/                         # Vitest unit and integration tests
 │   └── dist/                          # Built output (after npm run build)
 ```
 
 ## How It Works
 
-The MCP server integrates with Logos through three channels:
+The MCP server integrates with Logos through four channels:
 
 - **Biblia API** - Retrieves Bible text and search results via the free REST API from Faithlife (same company as Logos)
 - **URL schemes** - Opens passages, word studies, and factbook entries directly in the Logos app using `logos4:///` URLs (uses `open` on macOS, `start` on Windows)
@@ -427,10 +429,32 @@ The user-hash folder is discovered automatically. If auto-detection cannot find 
 
 **Tools don't appear** - Restart your MCP client. MCP servers are loaded at startup from the config file. For LM Studio, re-save the `mcp.json` file to trigger a reload.
 
-**Logos doesn't open passages** - Make sure Logos Bible Software is running before using `navigate_passage`, `open_word_study`, or `open_factbook`.
+**"Logos does not appear to be running"** - The UI tools (`navigate_passage`, `open_word_study`, `open_factbook`, `open_resource`, `open_guide`, `search_all`) check for a running Logos process before launching. Start Logos Bible Software and retry.
+
+**Windows: `search_all` or `open_guide` fails with a shell syntax error** - Symptoms look like Windows interpreting part of a Logos URL query string as a command. Checks:
+
+1. Rebuild the server with `npm run build` so your MCP client is using the latest launcher logic.
+2. Confirm Logos is installed and the `logos4:` protocol is still registered on Windows.
+3. Retry a simple UI tool such as `open_factbook` or `navigate_passage` to confirm the protocol handler works at all.
+
+**Biblia-backed tools return 403 or authentication failures** - Affected tools include `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, and `scan_references`. Checks:
+
+1. Confirm `BIBLIA_API_KEY` is present in your MCP client configuration.
+2. Restart the MCP client after editing the environment variables.
+3. Verify the key is still valid at [bibliaapi.com](https://bibliaapi.com/).
+4. If you hit rate limits, wait and retry instead of repeatedly sending the same request.
+
+**`get_library_catalog` returns no matches** - The library catalog tool searches your local Logos `catalog.db` directly. Zero results do not necessarily mean Logos needs to rebuild an index. Try:
+
+1. Broader keywords before combining multiple filters.
+2. An author-only search to confirm the database is being read.
+3. A type filter such as `commentary`, `lexicon`, or `dictionary`.
+4. Setting `LOGOS_CATALOG_DIR` explicitly if your Logos data is installed in a non-default location.
 
 **LM Studio: tools use too many tokens** - Some MCP tools return large responses. If you hit context overflow, try using a model with a larger context window, or ask for shorter/specific passages.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+Cross-reference data (when downloaded via `npm run fetch-xrefs`) comes from the [openbible.info cross-references project](https://www.openbible.info/labs/cross-references/) and is used under its Creative Commons Attribution license.

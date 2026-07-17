@@ -30,8 +30,18 @@ function resolveLogosDir(
   envVarName: "LOGOS_DATA_DIR" | "LOGOS_CATALOG_DIR"
 ): string {
   const base = getLogosBaseDir(subdir);
-  const entries = readdirSync(base, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory());
+
+  let entries;
+  try {
+    entries = readdirSync(base, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory());
+  } catch {
+    throw new Error(
+      `Logos data folder not found at ${base}. ` +
+      `Is Logos Bible Software installed on this machine? ` +
+      `If it lives elsewhere, set ${envVarName} to the correct path.`
+    );
+  }
 
   if (entries.length === 0) {
     throw new Error(
@@ -57,27 +67,65 @@ function resolveLogosDir(
   );
 }
 
-export const LOGOS_DATA_DIR =
-  process.env.LOGOS_DATA_DIR ??
-  resolveLogosDir("Documents", join("VisualMarkup", "visualmarkup.db"), "LOGOS_DATA_DIR");
+// Path resolution is lazy so the server can start (and Biblia-backed tools can
+// run) on machines without Logos desktop data. Resolution errors surface
+// per-tool when a database is first accessed.
+
+let cachedDataDir: string | undefined;
+let cachedCatalogDir: string | undefined;
+
+export function getLogosDataDir(): string {
+  if (cachedDataDir === undefined) {
+    cachedDataDir =
+      process.env.LOGOS_DATA_DIR ??
+      resolveLogosDir("Documents", join("VisualMarkup", "visualmarkup.db"), "LOGOS_DATA_DIR");
+  }
+  return cachedDataDir;
+}
 
 // Catalog DB lives under Data/ (not Documents/)
-export const LOGOS_CATALOG_DIR =
-  process.env.LOGOS_CATALOG_DIR ??
-  resolveLogosDir("Data", join("LibraryCatalog", "catalog.db"), "LOGOS_CATALOG_DIR");
+export function getLogosCatalogDir(): string {
+  if (cachedCatalogDir === undefined) {
+    cachedCatalogDir =
+      process.env.LOGOS_CATALOG_DIR ??
+      resolveLogosDir("Data", join("LibraryCatalog", "catalog.db"), "LOGOS_CATALOG_DIR");
+  }
+  return cachedCatalogDir;
+}
 
-export const DB_PATHS = {
-  visualMarkup: join(LOGOS_DATA_DIR, "VisualMarkup", "visualmarkup.db"),
-  favorites: join(LOGOS_DATA_DIR, "FavoritesManager", "favorites.db"),
-  workflows: join(LOGOS_DATA_DIR, "Workflows", "Workflows.db"),
-  readingLists: join(LOGOS_DATA_DIR, "ReadingLists", "ReadingLists.db"),
-  shortcuts: join(LOGOS_DATA_DIR, "ShortcutsManager", "shortcuts.db"),
-  guides: join(LOGOS_DATA_DIR, "Guides", "guides.db"),
-  notes: join(LOGOS_DATA_DIR, "NotesToolManager", "notestool.db"),
-  clippings: join(LOGOS_DATA_DIR, "Documents", "Clippings", "Clippings.db"),
-  passageLists: join(LOGOS_DATA_DIR, "Documents", "PassageList", "PassageList.db"),
-  catalog: join(LOGOS_CATALOG_DIR, "LibraryCatalog", "catalog.db"),
-} as const;
+export interface DbPaths {
+  visualMarkup: string;
+  favorites: string;
+  workflows: string;
+  readingLists: string;
+  shortcuts: string;
+  guides: string;
+  notes: string;
+  clippings: string;
+  passageLists: string;
+}
+
+// Documents-based databases and the catalog database resolve independently so
+// a missing catalog folder does not break notes/highlights tools (and vice versa).
+
+export function getDbPaths(): DbPaths {
+  const dataDir = getLogosDataDir();
+  return {
+    visualMarkup: join(dataDir, "VisualMarkup", "visualmarkup.db"),
+    favorites: join(dataDir, "FavoritesManager", "favorites.db"),
+    workflows: join(dataDir, "Workflows", "Workflows.db"),
+    readingLists: join(dataDir, "ReadingLists", "ReadingLists.db"),
+    shortcuts: join(dataDir, "ShortcutsManager", "shortcuts.db"),
+    guides: join(dataDir, "Guides", "guides.db"),
+    notes: join(dataDir, "NotesToolManager", "notestool.db"),
+    clippings: join(dataDir, "Documents", "Clippings", "Clippings.db"),
+    passageLists: join(dataDir, "Documents", "PassageList", "PassageList.db"),
+  };
+}
+
+export function getCatalogDbPath(): string {
+  return join(getLogosCatalogDir(), "LibraryCatalog", "catalog.db");
+}
 
 // ─── Biblia API ──────────────────────────────────────────────────────────────
 
@@ -85,11 +133,7 @@ export const BIBLIA_API_KEY = process.env.BIBLIA_API_KEY ?? "";
 export const BIBLIA_API_BASE = "https://api.biblia.com/v1/bible";
 export const DEFAULT_BIBLE = "LEB";
 
-// ─── Logos URL Schemes ───────────────────────────────────────────────────────
-
-export const LOGOS_URL_BASE = "logos4:";
-
 // ─── Server Info ─────────────────────────────────────────────────────────────
 
 export const SERVER_NAME = "logos-bible";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "1.2.0";

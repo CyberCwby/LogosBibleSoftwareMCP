@@ -12,6 +12,18 @@ function launcherForCurrentPlatform(): string {
 
 async function openUrl(url: string): Promise<LogosCommandResult> {
   const launcher = launcherForCurrentPlatform();
+
+  // Launching a protocol URL "succeeds" even when Logos is closed, so check
+  // the process first to turn a silent no-op into an actionable error.
+  if (await isLogosRunning() === false) {
+    return {
+      success: false,
+      command: url,
+      launcher,
+      error: "Logos does not appear to be running. Start Logos Bible Software and try again.",
+    };
+  }
+
   try {
     if (platform() === "win32") {
       // Use the registered protocol handler directly so URLs with '&' are not parsed by cmd.exe.
@@ -39,11 +51,6 @@ export async function navigateToPassage(reference: string): Promise<LogosCommand
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, command: `logos4:///Bible/...`, launcher: launcherForCurrentPlatform(), error: msg };
   }
-}
-
-export async function searchBibleInLogos(query: string): Promise<LogosCommandResult> {
-  const encoded = encodeURIComponent(query);
-  return openUrl(`logos4:///Search?type=Bible&q=${encoded}`);
 }
 
 export async function openWordStudy(word: string): Promise<LogosCommandResult> {
@@ -99,21 +106,27 @@ export async function searchAll(query: string): Promise<LogosCommandResult> {
   return openUrl(`logos4:///Search?kind=AllSearch&syntax=v2&q=${encoded}`);
 }
 
-export async function isLogosRunning(): Promise<boolean> {
+/**
+ * Detect whether the Logos desktop app is running. Returns null when the
+ * check itself is unavailable (unsupported platform or process-listing
+ * failure) so callers don't refuse to launch on an inconclusive answer.
+ */
+export async function isLogosRunning(): Promise<boolean | null> {
   try {
     if (platform() === "win32") {
       const { stdout } = await execFileAsync("tasklist", [
         "/FI", "IMAGENAME eq Logos.exe", "/NH",
       ]);
       return stdout.toLowerCase().includes("logos.exe");
-    } else {
+    } else if (platform() === "darwin") {
       const { stdout } = await execFileAsync("osascript", [
         "-e",
         'tell application "System Events" to (name of processes) contains "Logos"',
       ]);
       return stdout.trim() === "true";
     }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }

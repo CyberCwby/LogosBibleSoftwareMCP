@@ -18,7 +18,8 @@ const dbPaths = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/config.js", () => ({
-  DB_PATHS: dbPaths,
+  getDbPaths: () => dbPaths,
+  getCatalogDbPath: () => dbPaths.catalog,
 }));
 
 function createDb(path: string, statements: string[], inserts: Array<{ sql: string; params?: unknown[] }> = []) {
@@ -67,11 +68,11 @@ describe("sqlite reader integration", () => {
       [
         {
           sql: "INSERT INTO Markup VALUES (?, ?, ?, ?, ?)",
-          params: ["LLS:1", "Jn 3:16", "Solid Colors", "2026-03-20", 0],
+          params: ["LLS:1", "bible+leb.43.3.16", "Solid Colors", "2026-03-20", 0],
         },
         {
           sql: "INSERT INTO Markup VALUES (?, ?, ?, ?, ?)",
-          params: ["LLS:2", "Ro 8:28", "Emphasis", "2026-03-19", 0],
+          params: ["LLS:2", "bible+leb.45.8.28-45.8.30", "Emphasis", "2026-03-19", 0],
         },
       ]
     );
@@ -124,7 +125,7 @@ describe("sqlite reader integration", () => {
       dbPaths.readingLists,
       [
         "CREATE TABLE ReadingListStatuses (Title TEXT, Author TEXT, Path TEXT, Status INTEGER, ModifiedDate TEXT, IsDeleted INTEGER);",
-        "CREATE TABLE Items (ItemId TEXT, ReadingListPathNormalized TEXT, IsRead INTEGER, ModifiedDate TEXT);",
+        "CREATE TABLE Items (ItemId TEXT, ReadingListPathNormalized TEXT, Title TEXT, SortOrder INTEGER, IsRead INTEGER, ModifiedDate TEXT);",
       ],
       [
         {
@@ -132,12 +133,68 @@ describe("sqlite reader integration", () => {
           params: ["Read Romans", "Paul", "/plans/romans", 1, "2026-03-15", 0],
         },
         {
-          sql: "INSERT INTO Items VALUES (?, ?, ?, ?)",
-          params: ["item-1", "/plans/romans", 1, "2026-03-15"],
+          sql: "INSERT INTO ReadingListStatuses VALUES (?, ?, ?, ?, ?, ?)",
+          params: ["Finished Plan", "John", "/plans/john", 2, "2026-03-15", 0],
         },
         {
-          sql: "INSERT INTO Items VALUES (?, ?, ?, ?)",
-          params: ["item-2", "/plans/romans", 0, "2026-03-16"],
+          sql: "INSERT INTO Items VALUES (?, ?, ?, ?, ?, ?)",
+          params: ["item-1", "/plans/romans", "Romans 1-2", 1, 1, "2026-03-15"],
+        },
+        {
+          sql: "INSERT INTO Items VALUES (?, ?, ?, ?, ?, ?)",
+          params: ["item-2", "/plans/romans", "Romans 3-4", 2, 0, "2026-03-16"],
+        },
+        {
+          sql: "INSERT INTO Items VALUES (?, ?, ?, ?, ?, ?)",
+          params: ["item-3", "/plans/romans", "Romans 5-6", 3, 0, "2026-03-16"],
+        },
+      ]
+    );
+
+    createDb(
+      dbPaths.clippings,
+      [
+        `CREATE TABLE Clippings (
+          ClippingId INTEGER,
+          Title TEXT,
+          ContentRichText TEXT,
+          ResourceId TEXT,
+          AnchorsJson TEXT,
+          CreatedDate TEXT,
+          ModifiedDate TEXT,
+          IsDeleted INTEGER
+        );`,
+      ],
+      [
+        {
+          sql: "INSERT INTO Clippings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [1, "On grace", '<Paragraph><Run Text="Grace is unmerited favor"/></Paragraph>', "LLS:COMM1", '[{"reference":{"raw":"bible+leb.49.2.8"}}]', "2026-03-01", "2026-03-10", 0],
+        },
+        {
+          sql: "INSERT INTO Clippings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [2, "Deleted clipping", '<Paragraph><Run Text="Should not appear"/></Paragraph>', "LLS:COMM1", null, "2026-03-02", "2026-03-11", 1],
+        },
+      ]
+    );
+
+    createDb(
+      dbPaths.passageLists,
+      [
+        "CREATE TABLE PassageLists (PassageListId INTEGER, Title TEXT, IsDeleted INTEGER);",
+        "CREATE TABLE Passages (PassageListId INTEGER, Reference TEXT, IsDeleted INTEGER);",
+      ],
+      [
+        {
+          sql: "INSERT INTO PassageLists VALUES (?, ?, ?)",
+          params: [1, "Promises of God", 0],
+        },
+        {
+          sql: "INSERT INTO Passages VALUES (?, ?, ?)",
+          params: [1, "bible+leb.45.8.28", 0],
+        },
+        {
+          sql: "INSERT INTO Passages VALUES (?, ?, ?)",
+          params: [1, "bible+leb.50.4.19", 0],
         },
       ]
     );
@@ -155,7 +212,11 @@ describe("sqlite reader integration", () => {
         },
         {
           sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          params: [1, "note-1", '<Paragraph><Run Text="Grace alone"/></Paragraph>', "2026-03-01", "2026-03-20", "nb-1", "[]", "[]", 0, 0],
+          params: [1, "note-1", '<Paragraph><Run Text="Grace alone"/></Paragraph>', "2026-03-01", "2026-03-20", "nb-1", '[{"reference":{"raw":"bible+leb.45.8.28","resourceId":"LLS:LEB"}}]', "[]", 0, 0],
+        },
+        {
+          sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [2, "note-2", '<Paragraph><Run Text="Born again"/></Paragraph>', "2026-03-02", "2026-03-19", "nb-1", '[{"reference":{"raw":"bible+leb.43.3.1-43.3.21","resourceId":"LLS:LEB"}}]', "[]", 0, 0],
         },
       ]
     );
@@ -200,13 +261,28 @@ describe("sqlite reader integration", () => {
     expect(sqliteReader.getUserHighlights({ limit: 1 })).toEqual([
       {
         resourceId: "LLS:1",
-        textRange: "Jn 3:16",
+        textRange: "bible+leb.43.3.16",
         styleName: "Solid Colors",
         syncDate: "2026-03-20",
+        references: ["John 3:16"],
       },
     ]);
 
     expect(sqliteReader.getUserHighlights({ styleName: "Emphasis" })).toHaveLength(1);
+  });
+
+  it("filters highlights by Bible reference", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    const romans = sqliteReader.getUserHighlights({ reference: "Romans 8" });
+    expect(romans).toHaveLength(1);
+    expect(romans[0]).toMatchObject({
+      styleName: "Emphasis",
+      references: ["Romans 8:28-30"],
+    });
+
+    expect(sqliteReader.getUserHighlights({ reference: "Romans 8:29" })).toHaveLength(1);
+    expect(sqliteReader.getUserHighlights({ reference: "Genesis 1" })).toHaveLength(0);
   });
 
   it("reads favorites in rank order", async () => {
@@ -250,30 +326,115 @@ describe("sqlite reader integration", () => {
     const sqliteReader = await import("../src/services/sqlite-reader.js");
 
     expect(sqliteReader.getReadingProgress()).toMatchObject({
-      totalItems: 2,
+      totalItems: 3,
       completedItems: 1,
-      percentComplete: 50,
-      statuses: [
-        {
+      percentComplete: 33,
+      statuses: expect.arrayContaining([
+        expect.objectContaining({
           title: "Read Romans",
           author: "Paul",
           path: "/plans/romans",
           status: 1,
-        },
-      ],
+        }),
+      ]),
     });
   });
 
   it("reads notes and strips Logos rich text", async () => {
     const sqliteReader = await import("../src/services/sqlite-reader.js");
 
-    expect(sqliteReader.getUserNotes({ notebookTitle: "Romans" })).toEqual([
+    expect(sqliteReader.getUserNotes({ notebookTitle: "Romans", limit: 1 })).toEqual([
       expect.objectContaining({
         externalId: "note-1",
         notebookTitle: "Romans Study",
         content: "Grace alone",
+        references: ["Romans 8:28"],
       }),
     ]);
+  });
+
+  it("searches note contents with the query filter", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    const matches = sqliteReader.getUserNotes({ query: "born AGAIN" });
+    expect(matches).toHaveLength(1);
+    expect(matches[0].externalId).toBe("note-2");
+
+    expect(sqliteReader.getUserNotes({ query: "propitiation" })).toHaveLength(0);
+  });
+
+  it("reads clippings with schema discovery, skipping deleted rows", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    expect(sqliteReader.getClippings()).toEqual([
+      {
+        title: "On grace",
+        content: "Grace is unmerited favor",
+        resourceId: "LLS:COMM1",
+        createdDate: "2026-03-01",
+        modifiedDate: "2026-03-10",
+        references: ["Ephesians 2:8"],
+      },
+    ]);
+  });
+
+  it("reads passage lists grouped by list title", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    expect(sqliteReader.getPassageLists()).toEqual([
+      {
+        title: "Promises of God",
+        passages: ["Romans 8:28", "Philippians 4:19"],
+      },
+    ]);
+  });
+
+  it("returns next unread items per active reading plan", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    expect(sqliteReader.getTodaysReading({ perPlanLimit: 1 })).toEqual([
+      {
+        title: "Read Romans",
+        author: "Paul",
+        path: "/plans/romans",
+        remainingItems: 2,
+        nextItems: ["Romans 3-4"],
+      },
+    ]);
+  });
+
+  it("summarizes highlights by style", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    expect(sqliteReader.getHighlightSummary("style")).toEqual([
+      { key: "Solid Colors", count: 1, lastSyncDate: "2026-03-20" },
+      { key: "Emphasis", count: 1, lastSyncDate: "2026-03-19" },
+    ]);
+  });
+
+  it("lists notebooks with note counts", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    expect(sqliteReader.listNotebooks()).toEqual([
+      { externalId: "nb-1", title: "Romans Study", noteCount: 2 },
+    ]);
+
+    const notebookNotes = sqliteReader.getUserNotes({ notebookExternalId: "nb-1" });
+    expect(notebookNotes).toHaveLength(2);
+  });
+
+  it("filters notes by anchored Bible reference", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    const johnNotes = sqliteReader.getUserNotes({ reference: "John 3:16" });
+    expect(johnNotes).toHaveLength(1);
+    expect(johnNotes[0]).toMatchObject({
+      externalId: "note-2",
+      references: ["John 3:1-21"],
+    });
+
+    expect(sqliteReader.getUserNotes({ reference: "Rom 8" })).toHaveLength(1);
+    expect(sqliteReader.getUserNotes({ reference: "Genesis 1" })).toHaveLength(0);
   });
 
   it("searches catalog data and summarizes merged resource types", async () => {

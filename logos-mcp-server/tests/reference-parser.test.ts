@@ -5,6 +5,10 @@ import {
   toBibliaRef,
   toHumanReadable,
   expandRange,
+  canonicalizeReference,
+  bookNameFromNumber,
+  bookNumberFromName,
+  toBibleMilestone,
 } from "../src/services/reference-parser.js";
 
 describe("parseReference", () => {
@@ -64,6 +68,42 @@ describe("parseReference", () => {
 
     it("parses 2Tim", () => {
       expect(parseReference("2Tim 3:16").book).toBe("2 Timothy");
+    });
+  });
+
+  describe("spaced numbered abbreviations", () => {
+    it("parses 1 Sam", () => {
+      expect(parseReference("1 Sam 3:1").book).toBe("1 Samuel");
+    });
+
+    it("parses 1 Cor", () => {
+      expect(parseReference("1 Cor 13:4").book).toBe("1 Corinthians");
+    });
+
+    it("parses 2 Tim", () => {
+      expect(parseReference("2 Tim 2:15").book).toBe("2 Timothy");
+    });
+
+    it("parses 1 Thess", () => {
+      expect(parseReference("1 Thess 5:17").book).toBe("1 Thessalonians");
+    });
+
+    it("parses 2 Kgs", () => {
+      expect(parseReference("2 Kgs 2:11").book).toBe("2 Kings");
+    });
+
+    it("parses fused full names like 1John", () => {
+      expect(parseReference("1John 3:16").book).toBe("1 John");
+    });
+  });
+
+  describe("additional aliases", () => {
+    it("parses Song of Songs", () => {
+      expect(parseReference("Song of Songs 2:1").book).toBe("Song of Solomon");
+    });
+
+    it("parses Eccles", () => {
+      expect(parseReference("Eccles 3:1").book).toBe("Ecclesiastes");
     });
   });
 
@@ -272,6 +312,73 @@ describe("toHumanReadable", () => {
   it("round-trips Psalms 119:105-112", () => {
     const logos = toLogosUrlRef("Psalms 119:105-112");
     expect(toHumanReadable(logos)).toBe("Psalms 119:105-112");
+  });
+});
+
+describe("canonicalizeReference", () => {
+  it("normalizes abbreviations to canonical form", () => {
+    expect(canonicalizeReference("Rom 8:28")).toBe("Romans 8:28");
+  });
+
+  it("normalizes spaced abbreviations", () => {
+    expect(canonicalizeReference("1 Cor 13:4-7")).toBe("1 Corinthians 13:4-7");
+  });
+
+  it("normalizes cross-chapter ranges", () => {
+    expect(canonicalizeReference("Gen 1:1-2:3")).toBe("Genesis 1:1-2:3");
+  });
+
+  it("returns null for unparseable input", () => {
+    expect(canonicalizeReference("not a reference")).toBeNull();
+  });
+});
+
+describe("bookNameFromNumber", () => {
+  it("maps canonical book numbers", () => {
+    expect(bookNameFromNumber(1)).toBe("Genesis");
+    expect(bookNameFromNumber(24)).toBe("Jeremiah");
+    expect(bookNameFromNumber(45)).toBe("Romans");
+    expect(bookNameFromNumber(66)).toBe("Revelation");
+  });
+
+  it("returns null outside the canon", () => {
+    expect(bookNameFromNumber(0)).toBeNull();
+    expect(bookNameFromNumber(67)).toBeNull();
+  });
+});
+
+describe("toBibleMilestone", () => {
+  it("converts a verse reference", () => {
+    expect(toBibleMilestone("Jeremiah 1:1")).toBe("bible.24.1.1");
+  });
+
+  it("converts abbreviated references", () => {
+    expect(toBibleMilestone("Rom 8:28")).toBe("bible.45.8.28");
+  });
+
+  it("converts chapter-only references", () => {
+    expect(toBibleMilestone("Psalm 23")).toBe("bible.19.23");
+  });
+
+  it("converts verse ranges, repeating the book number", () => {
+    expect(toBibleMilestone("Romans 8:28-30")).toBe("bible.45.8.28-45.8.30");
+  });
+
+  it("converts cross-chapter ranges", () => {
+    expect(toBibleMilestone("Genesis 1:1-2:3")).toBe("bible.1.1.1-1.2.3");
+  });
+
+  it("throws on unknown books", () => {
+    expect(() => toBibleMilestone("Nowhere 1:1")).toThrow(/Unknown book/);
+  });
+});
+
+describe("bookNumberFromName", () => {
+  it("is the inverse of bookNameFromNumber", () => {
+    expect(bookNumberFromName("Genesis")).toBe(1);
+    expect(bookNumberFromName("Jeremiah")).toBe(24);
+    expect(bookNumberFromName("Revelation")).toBe(66);
+    expect(bookNumberFromName("Nowhere")).toBeNull();
   });
 });
 
