@@ -18,7 +18,8 @@ const dbPaths = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/config.js", () => ({
-  DB_PATHS: dbPaths,
+  getDbPaths: () => dbPaths,
+  getCatalogDbPath: () => dbPaths.catalog,
 }));
 
 function createDb(path: string, statements: string[], inserts: Array<{ sql: string; params?: unknown[] }> = []) {
@@ -67,11 +68,11 @@ describe("sqlite reader integration", () => {
       [
         {
           sql: "INSERT INTO Markup VALUES (?, ?, ?, ?, ?)",
-          params: ["LLS:1", "Jn 3:16", "Solid Colors", "2026-03-20", 0],
+          params: ["LLS:1", "bible+leb.43.3.16", "Solid Colors", "2026-03-20", 0],
         },
         {
           sql: "INSERT INTO Markup VALUES (?, ?, ?, ?, ?)",
-          params: ["LLS:2", "Ro 8:28", "Emphasis", "2026-03-19", 0],
+          params: ["LLS:2", "bible+leb.45.8.28-45.8.30", "Emphasis", "2026-03-19", 0],
         },
       ]
     );
@@ -155,7 +156,11 @@ describe("sqlite reader integration", () => {
         },
         {
           sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          params: [1, "note-1", '<Paragraph><Run Text="Grace alone"/></Paragraph>', "2026-03-01", "2026-03-20", "nb-1", "[]", "[]", 0, 0],
+          params: [1, "note-1", '<Paragraph><Run Text="Grace alone"/></Paragraph>', "2026-03-01", "2026-03-20", "nb-1", '[{"reference":{"raw":"bible+leb.45.8.28","resourceId":"LLS:LEB"}}]', "[]", 0, 0],
+        },
+        {
+          sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [2, "note-2", '<Paragraph><Run Text="Born again"/></Paragraph>', "2026-03-02", "2026-03-19", "nb-1", '[{"reference":{"raw":"bible+leb.43.3.1-43.3.21","resourceId":"LLS:LEB"}}]', "[]", 0, 0],
         },
       ]
     );
@@ -200,13 +205,28 @@ describe("sqlite reader integration", () => {
     expect(sqliteReader.getUserHighlights({ limit: 1 })).toEqual([
       {
         resourceId: "LLS:1",
-        textRange: "Jn 3:16",
+        textRange: "bible+leb.43.3.16",
         styleName: "Solid Colors",
         syncDate: "2026-03-20",
+        references: ["John 3:16"],
       },
     ]);
 
     expect(sqliteReader.getUserHighlights({ styleName: "Emphasis" })).toHaveLength(1);
+  });
+
+  it("filters highlights by Bible reference", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    const romans = sqliteReader.getUserHighlights({ reference: "Romans 8" });
+    expect(romans).toHaveLength(1);
+    expect(romans[0]).toMatchObject({
+      styleName: "Emphasis",
+      references: ["Romans 8:28-30"],
+    });
+
+    expect(sqliteReader.getUserHighlights({ reference: "Romans 8:29" })).toHaveLength(1);
+    expect(sqliteReader.getUserHighlights({ reference: "Genesis 1" })).toHaveLength(0);
   });
 
   it("reads favorites in rank order", async () => {
@@ -267,13 +287,28 @@ describe("sqlite reader integration", () => {
   it("reads notes and strips Logos rich text", async () => {
     const sqliteReader = await import("../src/services/sqlite-reader.js");
 
-    expect(sqliteReader.getUserNotes({ notebookTitle: "Romans" })).toEqual([
+    expect(sqliteReader.getUserNotes({ notebookTitle: "Romans", limit: 1 })).toEqual([
       expect.objectContaining({
         externalId: "note-1",
         notebookTitle: "Romans Study",
         content: "Grace alone",
+        references: ["Romans 8:28"],
       }),
     ]);
+  });
+
+  it("filters notes by anchored Bible reference", async () => {
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+
+    const johnNotes = sqliteReader.getUserNotes({ reference: "John 3:16" });
+    expect(johnNotes).toHaveLength(1);
+    expect(johnNotes[0]).toMatchObject({
+      externalId: "note-2",
+      references: ["John 3:1-21"],
+    });
+
+    expect(sqliteReader.getUserNotes({ reference: "Rom 8" })).toHaveLength(1);
+    expect(sqliteReader.getUserNotes({ reference: "Genesis 1" })).toHaveLength(0);
   });
 
   it("searches catalog data and summarizes merged resource types", async () => {

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { existsSync } from "fs";
-import { DB_PATHS } from "../config.js";
+import { getDbPaths } from "../config.js";
+import { anchorsMatchReference, describeBibleAnchors } from "../utils/bible-anchors.js";
 import { stripRichText } from "../utils/strip-markup.js";
 import type {
   HighlightResult,
@@ -19,14 +20,19 @@ function openDb(path: string): Database.Database {
   return new Database(path, { readonly: true, fileMustExist: true });
 }
 
+// When filtering by Bible reference we can't push the predicate into SQL, so
+// scan up to this many candidate rows before applying the limit.
+const REFERENCE_SCAN_LIMIT = 5000;
+
 // ─── Highlights ──────────────────────────────────────────────────────────────
 
 export function getUserHighlights(options: {
   resourceId?: string;
   styleName?: string;
+  reference?: string;
   limit?: number;
 } = {}): HighlightResult[] {
-  const db = openDb(DB_PATHS.visualMarkup);
+  const db = openDb(getDbPaths().visualMarkup);
   try {
     let sql = "SELECT ResourceId, SavedTextRange, MarkupStyleName, SyncDate FROM Markup WHERE IsDeleted = 0";
     const params: unknown[] = [];
@@ -40,10 +46,8 @@ export function getUserHighlights(options: {
       params.push(options.styleName);
     }
     sql += " ORDER BY SyncDate DESC";
-    if (options.limit) {
-      sql += " LIMIT ?";
-      params.push(options.limit);
-    }
+    sql += " LIMIT ?";
+    params.push(options.reference ? REFERENCE_SCAN_LIMIT : options.limit ?? REFERENCE_SCAN_LIMIT);
 
     const rows = db.prepare(sql).all(...params) as Array<{
       ResourceId: string;
@@ -52,12 +56,20 @@ export function getUserHighlights(options: {
       SyncDate: string | null;
     }>;
 
-    return rows.map((r) => ({
+    let results = rows.map((r) => ({
       resourceId: r.ResourceId,
       textRange: r.SavedTextRange,
       styleName: r.MarkupStyleName,
       syncDate: r.SyncDate,
+      references: describeBibleAnchors(r.SavedTextRange),
     }));
+
+    if (options.reference) {
+      const filter = options.reference;
+      results = results.filter((r) => anchorsMatchReference(r.textRange, filter));
+    }
+
+    return options.limit ? results.slice(0, options.limit) : results;
   } finally {
     db.close();
   }
@@ -66,7 +78,7 @@ export function getUserHighlights(options: {
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
 export function getFavorites(limit?: number): FavoriteResult[] {
-  const db = openDb(DB_PATHS.favorites);
+  const db = openDb(getDbPaths().favorites);
   try {
     let sql = `
       SELECT f.Id, f.Title, f.Rank, i.AppCommand, i.ResourceId
@@ -104,7 +116,7 @@ export function getFavorites(limit?: number): FavoriteResult[] {
 // ─── Workflows ───────────────────────────────────────────────────────────────
 
 export function getWorkflowTemplates(): WorkflowTemplate[] {
-  const db = openDb(DB_PATHS.workflows);
+  const db = openDb(getDbPaths().workflows);
   try {
     const rows = db.prepare(`
       SELECT TemplateId, ExternalId, TemplateJson, Author, CreatedDate
@@ -139,7 +151,7 @@ export function getWorkflowTemplates(): WorkflowTemplate[] {
 }
 
 export function getWorkflowInstances(limit: number = 20): WorkflowInstance[] {
-  const db = openDb(DB_PATHS.workflows);
+  const db = openDb(getDbPaths().workflows);
   try {
     const rows = db.prepare(`
       SELECT InstanceId, ExternalId, TemplateId, Key, Title,
@@ -182,7 +194,7 @@ export function getWorkflowInstances(limit: number = 20): WorkflowInstance[] {
 // ─── Reading Progress ────────────────────────────────────────────────────────
 
 export function getReadingProgress(): ReadingProgress {
-  const db = openDb(DB_PATHS.readingLists);
+  const db = openDb(getDbPaths().readingLists);
   try {
     const statuses = db.prepare(`
       SELECT Title, Author, Path, Status, ModifiedDate
@@ -242,13 +254,15 @@ export interface NoteResult {
   notebookTitle: string | null;
   anchorsJson: string | null;
   tagsJson: string | null;
+  references: string[];
 }
 
 export function getUserNotes(options: {
   notebookTitle?: string;
+  reference?: string;
   limit?: number;
 } = {}): NoteResult[] {
-  const db = openDb(DB_PATHS.notes);
+  const db = openDb(getDbPaths().notes);
   try {
     let sql = `
       SELECT n.NoteId, n.ExternalId, n.ContentRichText, n.CreatedDate,
@@ -266,11 +280,8 @@ export function getUserNotes(options: {
     }
 
     sql += " ORDER BY n.ModifiedDate DESC";
-
-    if (options.limit) {
-      sql += " LIMIT ?";
-      params.push(options.limit);
-    }
+    sql += " LIMIT ?";
+    params.push(options.reference ? REFERENCE_SCAN_LIMIT : options.limit ?? REFERENCE_SCAN_LIMIT);
 
     const rows = db.prepare(sql).all(...params) as Array<{
       NoteId: number;
@@ -283,7 +294,7 @@ export function getUserNotes(options: {
       TagsJson: string | null;
     }>;
 
-    return rows
+    let results = rows
       .map((r) => ({
         noteId: r.NoteId,
         externalId: r.ExternalId,
@@ -293,8 +304,16 @@ export function getUserNotes(options: {
         notebookTitle: r.NotebookTitle,
         anchorsJson: r.AnchorsJson,
         tagsJson: r.TagsJson,
+        references: describeBibleAnchors(r.AnchorsJson),
       }))
       .filter((n) => n.content !== null);
+
+    if (options.reference) {
+      const filter = options.reference;
+      results = results.filter((n) => anchorsMatchReference(n.anchorsJson, filter));
+    }
+
+    return options.limit ? results.slice(0, options.limit) : results;
   } finally {
     db.close();
   }

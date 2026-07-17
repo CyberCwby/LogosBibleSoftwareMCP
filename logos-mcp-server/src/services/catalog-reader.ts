@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { existsSync } from "fs";
-import { DB_PATHS } from "../config.js";
+import { getCatalogDbPath } from "../config.js";
 import { stripXml } from "../utils/strip-markup.js";
 import type { CatalogResource, ResourceTypeSummary, ResourceMilestone, ResourceReferenceInfo } from "../types.js";
 
@@ -137,7 +137,7 @@ export function searchCatalog(options: {
   author?: string;
   limit?: number;
 } = {}): CatalogResource[] {
-  const db = openDb(DB_PATHS.catalog);
+  const db = openDb(getCatalogDbPath());
   try {
     let sql = `
           SELECT ResourceId, Title, AbbreviatedTitle, Type, Authors,
@@ -220,7 +220,7 @@ function parseMilestoneIndexes(raw: string | null): ResourceMilestone[] {
 }
 
 export function getResourceReferenceInfo(resourceId: string): ResourceReferenceInfo | null {
-  const db = openDb(DB_PATHS.catalog);
+  const db = openDb(getCatalogDbPath());
   try {
     const row = db.prepare(`
       SELECT ResourceId, Title, Type, MilestoneIndexes, ReferenceSupersets
@@ -251,7 +251,7 @@ export function getResourceReferenceInfo(resourceId: string): ResourceReferenceI
 // ─── Resource Type Summary ──────────────────────────────────────────────────
 
 export function getResourceTypeSummary(): ResourceTypeSummary[] {
-  const db = openDb(DB_PATHS.catalog);
+  const db = openDb(getCatalogDbPath());
   try {
     const rows = db.prepare(`
       SELECT Type, COUNT(*) as Count

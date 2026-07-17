@@ -56,6 +56,8 @@ export interface HighlightResult {
   textRange: string;
   styleName: string;
   syncDate: string | null;
+  /** Human-readable Bible references parsed from the highlight range, when available */
+  references: string[];
 }
 
 export interface FavoriteResult {
@@ -175,19 +177,3 @@ export interface BibleInfo {
   publishers: string[];
 }
 
-// ─── MCP Tool Types ──────────────────────────────────────────────────────────
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  handler: (args: Record<string, unknown>) => Promise<ToolResult>;
-}
-
-export interface ToolResult {
-  content: Array<{
-    type: "text";
-    text: string;
-  }>;
-  isError?: boolean;
-}

@@ -2,6 +2,7 @@ import { BIBLIA_API_KEY, BIBLIA_API_BASE, DEFAULT_BIBLE } from "../config.js";
 import type { BibleTextResult, BibleSearchResult, BibleSearchHit, ScanResult, CompareResult, BibleInfo } from "../types.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 200;
 const MAX_RETRIES = 2;
 
 type CacheEntry = {
@@ -12,7 +13,7 @@ type CacheEntry = {
 const responseCache = new Map<string, CacheEntry>();
 
 export class BibliaApiError extends Error {
-  code: "missing_api_key" | "authentication_failed" | "rate_limited" | "network_error" | "service_unavailable" | "unexpected_response";
+  code: "missing_api_key" | "authentication_failed" | "rate_limited" | "network_error" | "service_unavailable" | "unexpected_response" | "invalid_request";
   status?: number;
   retryAfterSeconds?: number;
 
@@ -40,6 +41,12 @@ function getCachedValue(cacheKey: string): unknown | undefined {
 }
 
 function setCachedValue(cacheKey: string, value: unknown): void {
+  // Bound the cache: evict the oldest entries (Map preserves insertion order).
+  while (responseCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = responseCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    responseCache.delete(oldestKey);
+  }
   responseCache.set(cacheKey, {
     expiresAt: Date.now() + CACHE_TTL_MS,
     value,
@@ -186,15 +193,31 @@ async function bibliaFetch(path: string, params: Record<string, string>): Promis
   );
 }
 
+/**
+ * Validate a Bible version identifier before it is interpolated into a URL
+ * path. Biblia ids are alphanumeric (e.g. "LEB", "KJV1900", "TB010").
+ */
+function normalizeBibleId(bible: string): string {
+  const trimmed = bible.trim();
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(trimmed)) {
+    throw new BibliaApiError(
+      "invalid_request",
+      `Invalid Bible version "${bible}". Use an alphanumeric version id such as LEB, KJV, ASV, DARBY, YLT, or WEB (see get_available_bibles for the full list).`
+    );
+  }
+  return trimmed.toUpperCase();
+}
+
 export async function getBibleText(
   passage: string,
   bible: string = DEFAULT_BIBLE
 ): Promise<BibleTextResult> {
-  const text = await bibliaFetch(`/content/${bible}.txt`, { passage });
+  const bibleId = normalizeBibleId(bible);
+  const text = await bibliaFetch(`/content/${bibleId}.txt`, { passage });
   return {
     passage,
     text: String(text).trim(),
-    bible,
+    bible: bibleId,
   };
 }
 
@@ -202,7 +225,7 @@ export async function searchBible(
   query: string,
   options: { bible?: string; limit?: number; mode?: string } = {}
 ): Promise<BibleSearchResult> {
-  const bible = options.bible ?? DEFAULT_BIBLE;
+  const bible = normalizeBibleId(options.bible ?? DEFAULT_BIBLE);
   const data = await bibliaFetch(`/search/${bible}`, {
     query,
     mode: options.mode ?? "verse",
@@ -217,11 +240,6 @@ export async function searchBible(
       preview: r.preview ?? "",
     })),
   };
-}
-
-export async function parsePassage(text: string): Promise<string> {
-  const data = await bibliaFetch("/parse", { passage: text }) as { passage: string };
-  return data.passage ?? text;
 }
 
 // ─── Scan References ────────────────────────────────────────────────────────

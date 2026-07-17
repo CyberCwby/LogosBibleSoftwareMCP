@@ -33,8 +33,8 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/robrawks/LogosInteraction.git
-cd LogosInteraction
+git clone https://github.com/CyberCwby/LogosBibleSoftwareMCP.git
+cd LogosBibleSoftwareMCP
 ```
 
 ### 2. Install dependencies and build
@@ -56,7 +56,7 @@ cd ..
 
 Choose your client below. Each needs the path to the built server and your Biblia API key.
 
-> **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosInteraction` with your actual project path.
+> **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosBibleSoftwareMCP` with your actual project path.
 
 <details>
 <summary><strong>Claude Code</strong></summary>
@@ -98,7 +98,7 @@ Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosBibleSoftwareMCP\\logos-mcp-server\\dist\\index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -114,7 +114,7 @@ Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "args": ["/Users/YOUR_USER/path/to/LogosBibleSoftwareMCP/logos-mcp-server/dist/index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -175,7 +175,7 @@ Add (or merge into existing config):
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosBibleSoftwareMCP\\logos-mcp-server\\dist\\index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -191,7 +191,7 @@ Add (or merge into existing config):
   "mcpServers": {
     "logos": {
       "command": "node",
-      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "args": ["/Users/YOUR_USER/path/to/LogosBibleSoftwareMCP/logos-mcp-server/dist/index.js"],
       "env": {
         "BIBLIA_API_KEY": "your_api_key_here"
       }
@@ -277,40 +277,6 @@ Tools for searching Bible text and library resources
 | `scan_references` | Finds Bible references embedded in arbitrary text |
 | `search_all` | Searches across ALL resources in your library (not just Bible text) |
 
-## Troubleshooting
-
-### Windows: `search_all` or `open_guide` fails with a shell syntax error
-
-Symptoms often look like Windows trying to interpret part of a Logos URL query string as a command, especially when the URL contains multiple query parameters.
-
-Checks:
-
-1. Rebuild the server with `npm run build` so your MCP client is using the latest launcher logic.
-2. Confirm Logos is installed and the `logos4:` protocol is still registered on Windows.
-3. Retry a simple UI tool such as `open_factbook` or `navigate_passage` to confirm the protocol handler works at all.
-
-### Biblia-backed tools return 403 or authentication failures
-
-Affected tools include `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, and `scan_references`.
-
-Checks:
-
-1. Confirm `BIBLIA_API_KEY` is present in your MCP client configuration.
-2. Restart the MCP client after editing the environment variables.
-3. Verify the key is still valid at [bibliaapi.com](https://bibliaapi.com/).
-4. If you hit rate limits, wait and retry instead of repeatedly sending the same request.
-
-### `get_library_catalog` returns no matches
-
-The library catalog tool searches your local Logos `catalog.db` directly. Zero results do not necessarily mean Logos needs to rebuild an index.
-
-Try:
-
-1. Broader keywords before combining multiple filters.
-2. An author-only search to confirm the database is being read.
-3. A type filter such as `commentary`, `lexicon`, or `dictionary`.
-4. Setting `LOGOS_CATALOG_DIR` explicitly if your Logos data is installed in a non-default location.
-
 ### Library & Resources
 Tools for browsing your owned library catalog
 
@@ -328,8 +294,8 @@ Tools for accessing your notes, highlights, favorites, and reading progress
 
 | Tool | What it does |
 |------|-------------|
-| `get_user_notes` | Reads your study notes from Logos |
-| `get_user_highlights` | Reads your highlights and visual markup |
+| `get_user_notes` | Reads your study notes from Logos, with anchored Bible references; filter by notebook or by reference (e.g., "Romans 8") |
+| `get_user_highlights` | Reads your highlights and visual markup as Bible references; filter by resource, style, or reference |
 | `get_favorites` | Lists your saved favorites/bookmarks |
 | `get_reading_progress` | Shows your reading plan status |
 
@@ -365,7 +331,7 @@ The agent will ask what you want to study and guide you through Scripture using 
 ## Project Structure
 
 ```
-LogosInteraction/
+LogosBibleSoftwareMCP/
 ├── .claude/
 │   └── agents/
 │       └── socratic-bible-study.md    # Socratic agent definition (Claude Code)
@@ -373,25 +339,31 @@ LogosInteraction/
 ├── .vscode/
 │   └── mcp.json                       # VS Code + Copilot MCP config (you create this)
 ├── .env                               # API key (you create this)
+├── LICENSE
 ├── logos-mcp-server/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
 │   │   ├── index.ts                   # MCP server entry point (22 tools)
-│   │   ├── config.ts                  # Paths, API config, constants
+│   │   ├── config.ts                  # Lazy path resolution, API config, constants
 │   │   ├── types.ts                   # Shared TypeScript types
-│   │   └── services/
-│   │       ├── reference-parser.ts    # Bible reference normalization
-│   │       ├── biblia-api.ts          # Biblia.com REST API client
-│   │       ├── logos-app.ts           # Cross-platform URL scheme & process detection
-│   │       ├── sqlite-reader.ts       # Read-only Logos SQLite access
-│   │       └── catalog-reader.ts     # Library catalog search (catalog.db)
+│   │   ├── services/
+│   │   │   ├── reference-parser.ts    # Bible reference normalization
+│   │   │   ├── biblia-api.ts          # Biblia.com REST API client
+│   │   │   ├── logos-app.ts           # Cross-platform URL scheme & process detection
+│   │   │   ├── sqlite-reader.ts       # Read-only Logos SQLite access
+│   │   │   ├── catalog-reader.ts      # Library catalog search (catalog.db)
+│   │   │   └── ui-automation-reader.ts # Windows UI Automation text scraping (experimental)
+│   │   └── utils/
+│   │       ├── strip-markup.ts        # XML / rich-text stripping helpers
+│   │       └── bible-anchors.ts       # Parse Bible references from note/highlight anchors
+│   ├── tests/                         # Vitest unit and integration tests
 │   └── dist/                          # Built output (after npm run build)
 ```
 
 ## How It Works
 
-The MCP server integrates with Logos through three channels:
+The MCP server integrates with Logos through four channels:
 
 - **Biblia API** - Retrieves Bible text and search results via the free REST API from Faithlife (same company as Logos)
 - **URL schemes** - Opens passages, word studies, and factbook entries directly in the Logos app using `logos4:///` URLs (uses `open` on macOS, `start` on Windows)
@@ -427,10 +399,30 @@ The user-hash folder is discovered automatically. If auto-detection cannot find 
 
 **Tools don't appear** - Restart your MCP client. MCP servers are loaded at startup from the config file. For LM Studio, re-save the `mcp.json` file to trigger a reload.
 
-**Logos doesn't open passages** - Make sure Logos Bible Software is running before using `navigate_passage`, `open_word_study`, or `open_factbook`.
+**"Logos does not appear to be running"** - The UI tools (`navigate_passage`, `open_word_study`, `open_factbook`, `open_resource`, `open_guide`, `search_all`) check for a running Logos process before launching. Start Logos Bible Software and retry.
+
+**Windows: `search_all` or `open_guide` fails with a shell syntax error** - Symptoms look like Windows interpreting part of a Logos URL query string as a command. Checks:
+
+1. Rebuild the server with `npm run build` so your MCP client is using the latest launcher logic.
+2. Confirm Logos is installed and the `logos4:` protocol is still registered on Windows.
+3. Retry a simple UI tool such as `open_factbook` or `navigate_passage` to confirm the protocol handler works at all.
+
+**Biblia-backed tools return 403 or authentication failures** - Affected tools include `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, and `scan_references`. Checks:
+
+1. Confirm `BIBLIA_API_KEY` is present in your MCP client configuration.
+2. Restart the MCP client after editing the environment variables.
+3. Verify the key is still valid at [bibliaapi.com](https://bibliaapi.com/).
+4. If you hit rate limits, wait and retry instead of repeatedly sending the same request.
+
+**`get_library_catalog` returns no matches** - The library catalog tool searches your local Logos `catalog.db` directly. Zero results do not necessarily mean Logos needs to rebuild an index. Try:
+
+1. Broader keywords before combining multiple filters.
+2. An author-only search to confirm the database is being read.
+3. A type filter such as `commentary`, `lexicon`, or `dictionary`.
+4. Setting `LOGOS_CATALOG_DIR` explicitly if your Logos data is installed in a non-default location.
 
 **LM Studio: tools use too many tokens** - Some MCP tools return large responses. If you hit context overflow, try using a model with a larger context window, or ask for shorter/specific passages.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

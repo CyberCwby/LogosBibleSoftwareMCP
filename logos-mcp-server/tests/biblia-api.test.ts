@@ -115,6 +115,38 @@ describe("biblia-api", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects invalid Bible version ids before making a request", async () => {
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.getBibleText("John 3:16", "../search")).rejects.toMatchObject({
+      name: "BibliaApiError",
+      code: "invalid_request",
+    });
+    await expect(bibliaApi.searchBible("love", { bible: "LEB?key=x" })).rejects.toMatchObject({
+      name: "BibliaApiError",
+      code: "invalid_request",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uppercases valid Bible version ids", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: "In the beginning",
+        contentType: "text/plain",
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.getBibleText("Genesis 1:1", "kjv")).resolves.toMatchObject({
+      bible: "KJV",
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain("/content/KJV.txt");
+  });
+
   it("surfaces network failures with an actionable message", async () => {
     fetchMock.mockRejectedValue(new Error("socket hang up"));
 

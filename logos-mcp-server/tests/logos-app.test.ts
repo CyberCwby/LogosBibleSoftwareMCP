@@ -42,9 +42,17 @@ describe("logos-app", () => {
     vi.resetModules();
     execFileMock.mockReset();
     platformMock.mockReset();
+    // Default: process checks report Logos as running, launches succeed.
     execFileMock.mockImplementation((...args: unknown[]) => {
+      const command = args[0] as string;
       const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
-      callback(null, "", "");
+      if (command === "tasklist") {
+        callback(null, "Logos.exe                    1234 Console", "");
+      } else if (command === "osascript") {
+        callback(null, "true\n", "");
+      } else {
+        callback(null, "", "");
+      }
     });
   });
 
@@ -133,6 +141,49 @@ describe("logos-app", () => {
       ],
       expect.any(Function)
     );
+  });
+
+  it("refuses to launch URLs when Logos is not running", async () => {
+    platformMock.mockReturnValue("win32");
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(null, "INFO: No tasks are running which match the specified criteria.", "");
+    });
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.openFactbook("Moses");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/does not appear to be running/);
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "rundll32.exe",
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it("still launches when the running check is inconclusive", async () => {
+    platformMock.mockReturnValue("win32");
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const command = args[0] as string;
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (command === "tasklist") {
+        callback(new Error("tasklist unavailable"), "", "");
+      } else {
+        callback(null, "", "");
+      }
+    });
+    const logosApp = await import("../src/services/logos-app.js");
+
+    await expect(logosApp.openFactbook("Moses")).resolves.toMatchObject({ success: true });
+  });
+
+  it("returns null from isLogosRunning on unsupported platforms", async () => {
+    platformMock.mockReturnValue("linux");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    await expect(logosApp.isLogosRunning()).resolves.toBeNull();
   });
 
   it("reports command failures as unsuccessful results", async () => {

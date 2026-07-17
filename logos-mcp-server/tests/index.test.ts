@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 const searchCatalogMock = vi.hoisted(() => vi.fn(() => [{ resourceId: "LLS:COMM", title: "Romans Commentary", abbreviatedTitle: "Rom Comm", type: "text.monograph.commentary.bible", authors: "John Murray", subjects: "Romans", description: "Classic", publicationDate: "1959" }]));
 const getBibleTextMock = vi.hoisted(() => vi.fn(async (passage: string, bible?: string) => ({
@@ -12,20 +13,30 @@ const searchBibleMock = vi.hoisted(() => vi.fn(async (query: string) => ({
   results: [{ title: "Romans 8:28", preview: "All things work together..." }],
 })));
 
+interface RegisteredTool {
+  name: string;
+  config: {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: Record<string, unknown>;
+  };
+  handler: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
 const mcpState = vi.hoisted(() => ({
-  instances: [] as Array<{ tools: Array<{ name: string; description: string; schema: unknown; handler: (args: Record<string, unknown>) => Promise<unknown> }> }>,
+  instances: [] as Array<{ tools: RegisteredTool[] }>,
 }));
 
 vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
   McpServer: class FakeMcpServer {
-    tools: Array<{ name: string; description: string; schema: unknown; handler: (args: Record<string, unknown>) => Promise<unknown> }> = [];
+    tools: RegisteredTool[] = [];
 
     constructor(_info: unknown) {
       mcpState.instances.push(this);
     }
 
-    tool(name: string, description: string, schema: unknown, handler: (args: Record<string, unknown>) => Promise<unknown>) {
-      this.tools.push({ name, description, schema, handler });
+    registerTool(name: string, config: RegisteredTool["config"], handler: RegisteredTool["handler"]) {
+      this.tools.push({ name, config, handler });
     }
 
     async connect(_transport: unknown) {
@@ -82,17 +93,23 @@ vi.mock("../src/services/logos-app.js", () => ({
   searchAll: vi.fn(async () => ({ success: false, command: "logos4:///Search", launcher: "rundll32.exe", error: "Logos not running" })),
 }));
 
-vi.mock("../src/services/reference-parser.js", () => ({
-  expandRange: vi.fn(() => "John 3:11-21"),
-}));
+vi.mock("../src/services/reference-parser.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/services/reference-parser.js")>(
+    "../src/services/reference-parser.js"
+  );
+  return {
+    ...actual,
+    expandRange: vi.fn(() => "John 3:11-21"),
+  };
+});
 
 vi.mock("../src/services/sqlite-reader.js", () => ({
-  getUserHighlights: vi.fn(() => [{ resourceId: "LLS:ROM", textRange: "Ro 8:28", styleName: "Solid Colors", syncDate: "2026-03-20" }]),
+  getUserHighlights: vi.fn(() => [{ resourceId: "LLS:ROM", textRange: "bible+leb.45.8.28", styleName: "Solid Colors", syncDate: "2026-03-20", references: ["Romans 8:28"] }]),
   getFavorites: vi.fn(() => [{ id: "fav-1", title: "Romans", appCommand: "logos4:///Bible/Ro8.28", resourceId: "LLS:ROM", rank: 1 }]),
   getWorkflowTemplates: vi.fn(() => [{ templateId: 1, externalId: "inductive", title: "Inductive Study", author: "Logos", templateJson: null, createdDate: "2026-01-01" }]),
   getWorkflowInstances: vi.fn(() => [{ instanceId: 1, externalId: "inst-1", templateId: "1", key: "romans", title: "Romans", currentStep: "Observe", completedSteps: ["Read"], skippedSteps: [], createdDate: "2026-03-01", completedDate: null, modifiedDate: "2026-03-20" }]),
   getReadingProgress: vi.fn(() => ({ statuses: [{ title: "Read Romans", author: "Paul", path: "/romans", status: 1, modifiedDate: "2026-03-20" }], items: [], totalItems: 4, completedItems: 2, percentComplete: 50 })),
-  getUserNotes: vi.fn(() => [{ noteId: 1, externalId: "note-1", content: "Grace alone", createdDate: "2026-03-01", modifiedDate: "2026-03-20", notebookTitle: "Romans", anchorsJson: "[]", tagsJson: "[]" }]),
+  getUserNotes: vi.fn(() => [{ noteId: 1, externalId: "note-1", content: "Grace alone", createdDate: "2026-03-01", modifiedDate: "2026-03-20", notebookTitle: "Romans", anchorsJson: '[{"reference":{"raw":"bible+leb.45.8.28"}}]', tagsJson: "[]", references: ["Romans 8:28"] }]),
 }));
 
 vi.mock("../src/services/catalog-reader.js", () => ({
@@ -244,6 +261,112 @@ describe("index MCP registration", () => {
 
     expect(result).toEqual({
       content: [{ type: "text", text: "Library contains 12 resources across 1 types:\n\n- **Commentary**: 12" }],
+    });
+  });
+
+  it("notes truncation when search_bible returns more matches than shown", async () => {
+    searchBibleMock.mockResolvedValueOnce({
+      query: "love",
+      resultCount: 143,
+      results: [
+        { title: "John 3:16", preview: "For God so loved..." },
+        { title: "1 John 4:8", preview: "God is love" },
+      ],
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("search_bible");
+    const result = (await tool.handler({ query: "love" })) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toContain('Found 143 results for "love" (showing first 2)');
+  });
+
+  it("excludes the source passage from cross-references even when abbreviated", async () => {
+    searchBibleMock.mockResolvedValueOnce({
+      query: "sample",
+      resultCount: 2,
+      results: [
+        { title: "Romans 8:28", preview: "All things work together..." },
+        { title: "Genesis 50:20", preview: "You meant evil against me..." },
+      ],
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_cross_references");
+    const result = (await tool.handler({ passage: "Rom 8:28" })) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toContain("**Genesis 50:20**");
+    expect(result.content[0].text).not.toContain("**Romans 8:28**");
+  });
+
+  it("shows anchored Bible references on notes", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_user_notes");
+    const result = (await tool.handler({})) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toContain("[Romans] — Romans 8:28 (2026-03-20)");
+  });
+
+  it("shows parsed references instead of raw ranges on highlights", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_user_highlights");
+    const result = (await tool.handler({})) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toContain("- **Solid Colors**: Romans 8:28 (LLS:ROM)");
+  });
+
+  it("formats Biblia failures from scan_references as tool errors", async () => {
+    const bibliaApi = await import("../src/services/biblia-api.js");
+    vi.mocked(bibliaApi.scanReferences).mockRejectedValueOnce(
+      new bibliaApi.BibliaApiError("rate_limited" as never, "Biblia API rate limit exceeded. Wait a moment and try again.")
+    );
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("scan_references");
+    const result = await tool.handler({ text: "see John 3:16" });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Biblia API rate limit exceeded. Wait a moment and try again." }],
+      isError: true,
+    });
+  });
+
+  it("bounds limit parameters in the input schema", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("search_bible");
+    const schema = z.object(tool.config.inputSchema as z.ZodRawShape);
+
+    expect(schema.safeParse({ query: "love", limit: 20 }).success).toBe(true);
+    expect(schema.safeParse({ query: "love", limit: 0 }).success).toBe(false);
+    expect(schema.safeParse({ query: "love", limit: 500 }).success).toBe(false);
+    expect(schema.safeParse({ query: "love", limit: 2.5 }).success).toBe(false);
+  });
+
+  it("declares tool annotations distinguishing read-only and UI tools", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+
+    expect(getRegisteredTool("get_bible_text").config.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: true,
+    });
+    expect(getRegisteredTool("get_user_notes").config.annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(getRegisteredTool("navigate_passage").config.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
     });
   });
 });
