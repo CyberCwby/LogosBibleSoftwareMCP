@@ -133,6 +133,22 @@ export const BIBLIA_API_KEY = process.env.BIBLIA_API_KEY ?? "";
 export const BIBLIA_API_BASE = "https://api.biblia.com/v1/bible";
 export const DEFAULT_BIBLE = "LEB";
 
+// ─── Logos launch mode ───────────────────────────────────────────────────────
+// "desktop": always target the installed Logos app (error when it isn't running)
+// "web":     always open the Logos web app (app.logos.com / ref.ly) in a browser
+// "auto":    desktop when Logos is running, web app otherwise (default)
+
+export type LogosMode = "auto" | "desktop" | "web";
+
+function resolveLogosMode(): LogosMode {
+  const raw = (process.env.LOGOS_MODE ?? "auto").trim().toLowerCase();
+  if (raw === "desktop" || raw === "web" || raw === "auto") return raw;
+  console.warn(`Ignoring invalid LOGOS_MODE "${process.env.LOGOS_MODE}" (expected auto, desktop, or web).`);
+  return "auto";
+}
+
+export const LOGOS_MODE: LogosMode = resolveLogosMode();
+
 // ─── Server Info ─────────────────────────────────────────────────────────────
 
 export const SERVER_NAME = "logos-bible";

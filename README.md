@@ -22,12 +22,14 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 | `normalize_reference` | No | No | No |
 | `get_resource_text` | No | Yes | No |
 
+> **"Requires Logos UI" tools fall back to the Logos web app.** When the desktop app isn't running (or isn't installed — including on Linux), the UI tools open the same target in [app.logos.com](https://app.logos.com/) / [ref.ly](https://ref.ly/) in your default browser instead. Control this with the `LOGOS_MODE` environment variable: `auto` (default — desktop when running, web otherwise), `desktop` (never fall back), or `web` (always use the web app). Passage navigation, resource opening, and search deep-link cleanly; Factbook, word study, and guides open the right web-app section but may need the topic re-entered there. A [Logos account](https://app.logos.com/) with the resource in your library is needed for web resource reading.
+
 ## Prerequisites
 
 | Requirement | Details |
 |-------------|---------|
-| **Windows or macOS** | Both platforms supported |
-| **Logos Bible Software** | Installed and signed in (tested with v48) |
+| **Windows or macOS** | Both platforms supported (Linux works too: UI tools open the Logos **web app**, and Biblia-backed tools are platform-independent) |
+| **Logos Bible Software** | Installed and signed in (tested with v48) — *optional*: without it, UI tools fall back to [app.logos.com](https://app.logos.com/) and local-data tools are unavailable |
 | **Node.js** | v18+ (v23+ recommended for native `fetch` support) |
 | **An MCP client** | Claude Code, LM Studio, VS Code + Copilot, Claude Desktop, Cursor, or any [MCP-compatible app](https://modelcontextprotocol.io/clients) |
 | **Biblia API Key** | Free key from [bibliaapi.com](https://bibliaapi.com/) |
@@ -429,7 +431,9 @@ The user-hash folder is discovered automatically. If auto-detection cannot find 
 
 **Tools don't appear** - Restart your MCP client. MCP servers are loaded at startup from the config file. For LM Studio, re-save the `mcp.json` file to trigger a reload.
 
-**"Logos does not appear to be running"** - The UI tools (`navigate_passage`, `open_word_study`, `open_factbook`, `open_resource`, `open_guide`, `search_all`) check for a running Logos process before launching. Start Logos Bible Software and retry.
+**"Logos does not appear to be running"** - In the default `auto` mode, the UI tools fall back to the Logos web app when the desktop app isn't running, so this error only appears with `LOGOS_MODE=desktop`. Start Logos Bible Software and retry, or unset `LOGOS_MODE` to allow the web fallback.
+
+**UI tools open the browser instead of Logos** - The desktop app wasn't detected, so the tool used the web fallback. Make sure Logos is running (and set `LOGOS_MODE=desktop` if you never want the browser).
 
 **Windows: `search_all` or `open_guide` fails with a shell syntax error** - Symptoms look like Windows interpreting part of a Logos URL query string as a command. Checks:
 

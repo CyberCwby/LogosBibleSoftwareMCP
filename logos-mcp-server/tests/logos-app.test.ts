@@ -40,6 +40,7 @@ vi.mock("os", async () => {
 describe("logos-app", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.unstubAllEnvs();
     execFileMock.mockReset();
     platformMock.mockReset();
     // Default: process checks report Logos as running, launches succeed.
@@ -143,7 +144,38 @@ describe("logos-app", () => {
     );
   });
 
-  it("refuses to launch URLs when Logos is not running", async () => {
+  it("falls back to the Logos web app when Logos is not running (auto mode)", async () => {
+    platformMock.mockReturnValue("win32");
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const command = args[0] as string;
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (command === "tasklist") {
+        callback(null, "INFO: No tasks are running which match the specified criteria.", "");
+      } else {
+        callback(null, "", "");
+      }
+    });
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.openFactbook("Moses");
+
+    expect(result).toMatchObject({
+      success: true,
+      target: "web",
+      command: "https://app.logos.com/factbook?q=Moses",
+    });
+    expect(result.note).toMatch(/search Factbook/);
+    // Only the browser launch of the web URL, never the logos4: protocol URL
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "rundll32.exe",
+      ["url.dll,FileProtocolHandler", expect.stringContaining("logos4:")],
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it("errors instead of falling back when LOGOS_MODE=desktop", async () => {
+    vi.stubEnv("LOGOS_MODE", "desktop");
     platformMock.mockReturnValue("win32");
     execFileMock.mockImplementation((...args: unknown[]) => {
       const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
@@ -154,13 +186,71 @@ describe("logos-app", () => {
     const result = await logosApp.openFactbook("Moses");
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/does not appear to be running/);
-    expect(execFileMock).not.toHaveBeenCalledWith(
-      "rundll32.exe",
-      expect.anything(),
-      expect.anything(),
-      expect.anything()
-    );
+    expect(result.target).toBe("desktop");
+    expect(result.error).toMatch(/does not appear to be running.*LOGOS_MODE=auto/s);
+  });
+
+  it("goes straight to the web app when LOGOS_MODE=web, without a process check", async () => {
+    vi.stubEnv("LOGOS_MODE", "web");
+    platformMock.mockReturnValue("darwin");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.searchAll("grace");
+
+    expect(result).toMatchObject({
+      success: true,
+      target: "web",
+      command: "https://app.logos.com/search?q=grace",
+    });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock).toHaveBeenCalledWith("open", ["https://app.logos.com/search?q=grace"], expect.any(Function));
+  });
+
+  it("uses ref.ly and xdg-open for passages on Linux", async () => {
+    platformMock.mockReturnValue("linux");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.navigateToPassage("John 3:16");
+
+    expect(result).toMatchObject({
+      success: true,
+      target: "web",
+      command: "https://ref.ly/Jn3.16",
+      launcher: "xdg-open",
+    });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock).toHaveBeenCalledWith("xdg-open", ["https://ref.ly/Jn3.16"], expect.any(Function));
+  });
+
+  it("falls back to the web app when the desktop protocol launch fails in auto mode", async () => {
+    platformMock.mockReturnValue("darwin");
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const command = args[0] as string;
+      const url = (args[1] as string[])[0] ?? "";
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (command === "osascript") {
+        callback(null, "true\n", "");
+      } else if (url.startsWith("logos4:")) {
+        callback(new Error("no application to open URL"), "", "");
+      } else {
+        callback(null, "", "");
+      }
+    });
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.navigateToPassage("John 3:16");
+
+    expect(result).toMatchObject({ success: true, target: "web", command: "https://ref.ly/Jn3.16" });
+  });
+
+  it("builds ref.ly resource URLs without the LLS: prefix", async () => {
+    vi.stubEnv("LOGOS_MODE", "web");
+    platformMock.mockReturnValue("darwin");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.openResource("LLS:NICOT24GOLDINGAY", "bible.24.1.1");
+
+    expect(result.command).toBe("https://ref.ly/logosres/nicot24goldingay;ref=bible.24.1.1");
   });
 
   it("still launches when the running check is inconclusive", async () => {
@@ -186,7 +276,7 @@ describe("logos-app", () => {
     await expect(logosApp.isLogosRunning()).resolves.toBeNull();
   });
 
-  it("reports command failures as unsuccessful results", async () => {
+  it("reports command failures as unsuccessful results after both targets fail", async () => {
     platformMock.mockReturnValue("win32");
     execFileMock.mockImplementation((...args: unknown[]) => {
       const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
@@ -194,9 +284,12 @@ describe("logos-app", () => {
     });
     const logosApp = await import("../src/services/logos-app.js");
 
-    await expect(logosApp.searchAll("grace")).resolves.toEqual({
+    // Desktop attempt fails, then the web fallback fails too — the final
+    // result reflects the last attempted target.
+    await expect(logosApp.searchAll("grace")).resolves.toMatchObject({
       success: false,
-      command: "logos4:///Search?kind=AllSearch&syntax=v2&q=grace",
+      command: "https://app.logos.com/search?q=grace",
+      target: "web",
       launcher: "rundll32.exe",
       error: "start failed",
     });

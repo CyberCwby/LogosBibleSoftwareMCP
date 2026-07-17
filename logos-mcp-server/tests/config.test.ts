@@ -122,6 +122,25 @@ describe("config", () => {
     expect(paths.visualMarkup).toBe(join(base, "VisualMarkup", "visualmarkup.db"));
   });
 
+  it("resolves LOGOS_MODE with a safe default for invalid values", async () => {
+    platformMock.mockReturnValue("darwin");
+
+    vi.stubEnv("LOGOS_MODE", "web");
+    expect((await import("../src/config.js")).LOGOS_MODE).toBe("web");
+
+    vi.resetModules();
+    vi.stubEnv("LOGOS_MODE", "DESKTOP");
+    expect((await import("../src/config.js")).LOGOS_MODE).toBe("desktop");
+
+    vi.resetModules();
+    vi.stubEnv("LOGOS_MODE", "bogus");
+    expect((await import("../src/config.js")).LOGOS_MODE).toBe("auto");
+
+    vi.resetModules();
+    vi.stubEnv("LOGOS_MODE", "");
+    expect((await import("../src/config.js")).LOGOS_MODE).toBe("auto");
+  });
+
   it("throws a clear error when no Logos user folder exists", async () => {
     platformMock.mockReturnValue("win32");
     vi.stubEnv("LOCALAPPDATA", "C:\\Users\\tester\\AppData\\Local");
