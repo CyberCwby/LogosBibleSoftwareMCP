@@ -46,6 +46,10 @@ export interface LogosCommandResult {
   success: boolean;
   command: string;
   launcher?: string;
+  /** Where the action landed: the installed desktop app or the Logos web app */
+  target?: "desktop" | "web";
+  /** Caveat about web-app deep-linking limits, when applicable */
+  note?: string;
   error?: string;
 }
 

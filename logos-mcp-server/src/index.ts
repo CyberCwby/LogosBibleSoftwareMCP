@@ -44,6 +44,13 @@ function err(s: string) {
   return { content: [{ type: "text" as const, text: s }], isError: true as const };
 }
 
+// Success message for UI tools, naming where the action landed (desktop app
+// vs. Logos web app) plus any deep-linking caveat.
+function launched(base: string, result: { target?: "desktop" | "web"; note?: string }) {
+  const location = result.target === "web" ? "the Logos web app" : "Logos";
+  return text(`${base} in ${location}.${result.note ? ` ${result.note}` : ""}`);
+}
+
 type ToolResponse = ReturnType<typeof text> | ReturnType<typeof err>;
 
 function logToolFailure(toolName: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -123,7 +130,7 @@ export function registerTools(server: McpServer) {
   }, async ({ reference }: { reference: string }) => {
     const result = await navigateToPassage(reference);
     return result.success
-      ? text(`Opened ${reference} in Logos.`)
+      ? launched(`Opened ${reference}`, result)
       : err(`Failed to open passage: ${result.error}`);
   });
 
@@ -337,7 +344,7 @@ export function registerTools(server: McpServer) {
   }, async ({ word }: { word: string }) => {
     const result = await openWordStudy(word);
     return result.success
-      ? text(`Opened word study for "${word}" in Logos.`)
+      ? launched(`Opened word study for "${word}"`, result)
       : err(`Failed to open word study: ${result.error}`);
   });
 
@@ -349,7 +356,7 @@ export function registerTools(server: McpServer) {
   }, async ({ topic }: { topic: string }) => {
     const result = await openFactbook(topic);
     return result.success
-      ? text(`Opened Factbook entry for "${topic}" in Logos.`)
+      ? launched(`Opened Factbook entry for "${topic}"`, result)
       : err(`Failed to open Factbook: ${result.error}`);
   });
 
@@ -448,7 +455,7 @@ export function registerTools(server: McpServer) {
     const result = await openResource(resource_id, milestone);
     const refStr = reference ? ` at ${milestone}` : "";
     return result.success
-      ? text(`Opened resource \`${resource_id}\`${refStr} in Logos.`)
+      ? launched(`Opened resource \`${resource_id}\`${refStr}`, result)
       : err(`Failed to open resource: ${result.error}`);
   });
 
@@ -463,7 +470,7 @@ export function registerTools(server: McpServer) {
   }, async ({ guide_type, reference }: { guide_type: string; reference: string }) => {
     const result = await openGuide(guide_type, reference);
     return result.success
-      ? text(`Opened ${guide_type} for ${reference} in Logos.`)
+      ? launched(`Opened ${guide_type} for ${reference}`, result)
       : err(`Failed to open guide: ${result.error}`);
   });
 
@@ -477,7 +484,7 @@ export function registerTools(server: McpServer) {
   }, async ({ query }: { query: string }) => {
     const result = await searchAll(query);
     return result.success
-      ? text(`Opened Logos search for "${query}" across all resources.`)
+      ? launched(`Opened search for "${query}" across all resources`, result)
       : err(`Failed to open search via ${result.launcher ?? "the platform launcher"}: ${result.error}`);
   });
 

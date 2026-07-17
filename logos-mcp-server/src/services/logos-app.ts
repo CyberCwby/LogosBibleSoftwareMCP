@@ -1,52 +1,110 @@
 import { execFile } from "child_process";
 import { platform } from "os";
 import { promisify } from "util";
+import { LOGOS_MODE } from "../config.js";
 import { toLogosUrlRef } from "./reference-parser.js";
 import type { LogosCommandResult } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
+const WEB_APP_BASE = "https://app.logos.com";
+
 function launcherForCurrentPlatform(): string {
-  return platform() === "win32" ? "rundll32.exe" : "open";
+  switch (platform()) {
+    case "win32": return "rundll32.exe";
+    case "darwin": return "open";
+    default: return "xdg-open";
+  }
 }
 
-async function openUrl(url: string): Promise<LogosCommandResult> {
-  const launcher = launcherForCurrentPlatform();
+// The Logos desktop app only exists on Windows and macOS; elsewhere the web
+// app is the only possible target.
+function desktopIsPossible(): boolean {
+  return platform() === "win32" || platform() === "darwin";
+}
 
-  // Launching a protocol URL "succeeds" even when Logos is closed, so check
-  // the process first to turn a silent no-op into an actionable error.
-  if (await isLogosRunning() === false) {
-    return {
-      success: false,
-      command: url,
-      launcher,
-      error: "Logos does not appear to be running. Start Logos Bible Software and try again.",
-    };
-  }
-
+async function launchUrl(url: string): Promise<{ success: boolean; error?: string }> {
   try {
     if (platform() === "win32") {
       // Use the registered protocol handler directly so URLs with '&' are not parsed by cmd.exe.
       await execFileAsync("rundll32.exe", ["url.dll,FileProtocolHandler", url], {
         windowsHide: true,
       });
-    } else {
+    } else if (platform() === "darwin") {
       await execFileAsync("open", [url]);
+    } else {
+      await execFileAsync("xdg-open", [url]);
     }
-    return { success: true, command: url, launcher };
+    return { success: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { success: false, command: url, launcher, error: msg };
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
+interface LaunchTarget {
+  desktopUrl: string;
+  webUrl: string;
+  /** Caveat surfaced to the caller when the web app cannot deep-link precisely. */
+  webNote?: string;
+}
+
 /**
- * Navigates to a Bible passage in Logos.
+ * Open a Logos target according to LOGOS_MODE:
+ *  - "desktop": require the installed app (error when it is not running)
+ *  - "web":     always open the Logos web app in the default browser
+ *  - "auto":    desktop when Logos is running; otherwise fall back to the web app
+ */
+async function openInLogos(target: LaunchTarget): Promise<LogosCommandResult> {
+  const launcher = launcherForCurrentPlatform();
+
+  if (LOGOS_MODE !== "web") {
+    const running = desktopIsPossible() ? await isLogosRunning() : false;
+
+    if (LOGOS_MODE === "desktop") {
+      if (running === false) {
+        return {
+          success: false,
+          command: target.desktopUrl,
+          launcher,
+          target: "desktop",
+          error: "Logos does not appear to be running. Start Logos Bible Software and try again, or set LOGOS_MODE=auto to fall back to the Logos web app.",
+        };
+      }
+      const attempt = await launchUrl(target.desktopUrl);
+      return { success: attempt.success, command: target.desktopUrl, launcher, target: "desktop", error: attempt.error };
+    }
+
+    // auto: try the desktop app unless we know it is not running
+    if (running !== false) {
+      const attempt = await launchUrl(target.desktopUrl);
+      if (attempt.success) {
+        return { success: true, command: target.desktopUrl, launcher, target: "desktop" };
+      }
+      // Protocol launch failed (e.g., logos4: not registered) — fall back to the web app.
+    }
+  }
+
+  const webAttempt = await launchUrl(target.webUrl);
+  return {
+    success: webAttempt.success,
+    command: target.webUrl,
+    launcher,
+    target: "web",
+    note: webAttempt.success ? target.webNote : undefined,
+    error: webAttempt.error,
+  };
+}
+
+/**
+ * Navigates to a Bible passage in Logos (desktop) or via ref.ly (web).
  */
 export async function navigateToPassage(reference: string): Promise<LogosCommandResult> {
   try {
     const logosRef = toLogosUrlRef(reference);
-    return openUrl(`logos4:///Bible/${logosRef}`);
+    return openInLogos({
+      desktopUrl: `logos4:///Bible/${logosRef}`,
+      webUrl: `https://ref.ly/${logosRef}`,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, command: `logos4:///Bible/...`, launcher: launcherForCurrentPlatform(), error: msg };
@@ -55,12 +113,20 @@ export async function navigateToPassage(reference: string): Promise<LogosCommand
 
 export async function openWordStudy(word: string): Promise<LogosCommandResult> {
   const encoded = encodeURIComponent(word);
-  return openUrl(`logos4:///WordStudy?word=${encoded}`);
+  return openInLogos({
+    desktopUrl: `logos4:///WordStudy?word=${encoded}`,
+    webUrl: `${WEB_APP_BASE}/guides?t=${encodeURIComponent("Bible Word Study")}&word=${encoded}`,
+    webNote: `If the web app did not open the word study directly, choose "Bible Word Study" in Guides and enter "${word}".`,
+  });
 }
 
 export async function openFactbook(topic: string): Promise<LogosCommandResult> {
   const encoded = encodeURIComponent(topic);
-  return openUrl(`logos4:///Factbook?ref=${encoded}`);
+  return openInLogos({
+    desktopUrl: `logos4:///Factbook?ref=${encoded}`,
+    webUrl: `${WEB_APP_BASE}/factbook?q=${encoded}`,
+    webNote: `If the web app did not open the entry directly, search Factbook for "${topic}".`,
+  });
 }
 
 /**
@@ -74,13 +140,14 @@ export async function openResource(
 ): Promise<LogosCommandResult> {
   try {
     const encodedId = encodeURIComponent(resourceId);
-    let url = `logosres:${encodedId}`;
-    
-    if (reference) {
-      url += `;ref=${encodeURIComponent(reference)}`;
-    }
-    
-    return openUrl(url);
+    const refSuffix = reference ? `;ref=${encodeURIComponent(reference)}` : "";
+    // ref.ly resource links use the id without the "LLS:" prefix, lowercased.
+    const webId = encodeURIComponent(resourceId.replace(/^LLS:/i, "").toLowerCase());
+    return openInLogos({
+      desktopUrl: `logosres:${encodedId}${refSuffix}`,
+      webUrl: `https://ref.ly/logosres/${webId}${refSuffix}`,
+      webNote: "Web access to a resource requires it to be in your Logos library and readable in the web app.",
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, command: `logosres:${resourceId}`, launcher: launcherForCurrentPlatform(), error: msg };
@@ -94,7 +161,11 @@ export async function openGuide(
   try {
     const logosRef = toLogosUrlRef(reference);
     const template = encodeURIComponent(guideType);
-    return openUrl(`logos4:///Guide?t=${template}&ref=bible.${logosRef}`);
+    return openInLogos({
+      desktopUrl: `logos4:///Guide?t=${template}&ref=bible.${logosRef}`,
+      webUrl: `${WEB_APP_BASE}/guides?t=${template}&ref=bible.${logosRef}`,
+      webNote: `If the web app did not open the guide directly, choose "${guideType}" in Guides and enter ${reference}.`,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, command: "", launcher: launcherForCurrentPlatform(), error: msg };
@@ -103,7 +174,10 @@ export async function openGuide(
 
 export async function searchAll(query: string): Promise<LogosCommandResult> {
   const encoded = encodeURIComponent(query);
-  return openUrl(`logos4:///Search?kind=AllSearch&syntax=v2&q=${encoded}`);
+  return openInLogos({
+    desktopUrl: `logos4:///Search?kind=AllSearch&syntax=v2&q=${encoded}`,
+    webUrl: `${WEB_APP_BASE}/search?q=${encoded}`,
+  });
 }
 
 /**

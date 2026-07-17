@@ -248,6 +248,25 @@ describe("index MCP registration", () => {
     });
   });
 
+  it("says when an action landed in the Logos web app and relays the caveat", async () => {
+    const logosApp = await import("../src/services/logos-app.js");
+    vi.mocked(logosApp.openFactbook).mockResolvedValueOnce({
+      success: true,
+      command: "https://app.logos.com/factbook?q=Moses",
+      target: "web",
+      note: 'If the web app did not open the entry directly, search Factbook for "Moses".',
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("open_factbook");
+    const result = (await tool.handler({ topic: "Moses" })) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toBe(
+      'Opened Factbook entry for "Moses" in the Logos web app. If the web app did not open the entry directly, search Factbook for "Moses".'
+    );
+  });
+
   it("formats successful Logos navigation responses", async () => {
     const indexModule = await import("../src/index.js");
 
