@@ -136,4 +136,4 @@ export const DEFAULT_BIBLE = "LEB";
 // ─── Server Info ─────────────────────────────────────────────────────────────
 
 export const SERVER_NAME = "logos-bible";
-export const SERVER_VERSION = "1.1.0";
+export const SERVER_VERSION = "1.2.0";

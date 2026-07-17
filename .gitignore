@@ -6,3 +6,4 @@ dist/
 .DS_Store
 .claude/agents/
 .worktrees/
+logos-mcp-server/data/*.gz

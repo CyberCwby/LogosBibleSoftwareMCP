@@ -7,6 +7,8 @@ import {
   expandRange,
   canonicalizeReference,
   bookNameFromNumber,
+  bookNumberFromName,
+  toBibleMilestone,
 } from "../src/services/reference-parser.js";
 
 describe("parseReference", () => {
@@ -342,6 +344,41 @@ describe("bookNameFromNumber", () => {
   it("returns null outside the canon", () => {
     expect(bookNameFromNumber(0)).toBeNull();
     expect(bookNameFromNumber(67)).toBeNull();
+  });
+});
+
+describe("toBibleMilestone", () => {
+  it("converts a verse reference", () => {
+    expect(toBibleMilestone("Jeremiah 1:1")).toBe("bible.24.1.1");
+  });
+
+  it("converts abbreviated references", () => {
+    expect(toBibleMilestone("Rom 8:28")).toBe("bible.45.8.28");
+  });
+
+  it("converts chapter-only references", () => {
+    expect(toBibleMilestone("Psalm 23")).toBe("bible.19.23");
+  });
+
+  it("converts verse ranges, repeating the book number", () => {
+    expect(toBibleMilestone("Romans 8:28-30")).toBe("bible.45.8.28-45.8.30");
+  });
+
+  it("converts cross-chapter ranges", () => {
+    expect(toBibleMilestone("Genesis 1:1-2:3")).toBe("bible.1.1.1-1.2.3");
+  });
+
+  it("throws on unknown books", () => {
+    expect(() => toBibleMilestone("Nowhere 1:1")).toThrow(/Unknown book/);
+  });
+});
+
+describe("bookNumberFromName", () => {
+  it("is the inverse of bookNameFromNumber", () => {
+    expect(bookNumberFromName("Genesis")).toBe(1);
+    expect(bookNumberFromName("Jeremiah")).toBe(24);
+    expect(bookNumberFromName("Revelation")).toBe(66);
+    expect(bookNumberFromName("Nowhere")).toBeNull();
   });
 });
 

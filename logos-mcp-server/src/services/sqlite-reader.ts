@@ -259,7 +259,9 @@ export interface NoteResult {
 
 export function getUserNotes(options: {
   notebookTitle?: string;
+  notebookExternalId?: string;
   reference?: string;
+  query?: string;
   limit?: number;
 } = {}): NoteResult[] {
   const db = openDb(getDbPaths().notes);
@@ -278,10 +280,15 @@ export function getUserNotes(options: {
       sql += " AND nb.Title LIKE ?";
       params.push(`%${options.notebookTitle}%`);
     }
+    if (options.notebookExternalId) {
+      sql += " AND n.NotebookExternalId = ?";
+      params.push(options.notebookExternalId);
+    }
 
     sql += " ORDER BY n.ModifiedDate DESC";
     sql += " LIMIT ?";
-    params.push(options.reference ? REFERENCE_SCAN_LIMIT : options.limit ?? REFERENCE_SCAN_LIMIT);
+    const needsScan = Boolean(options.reference || options.query);
+    params.push(needsScan ? REFERENCE_SCAN_LIMIT : options.limit ?? REFERENCE_SCAN_LIMIT);
 
     const rows = db.prepare(sql).all(...params) as Array<{
       NoteId: number;
@@ -312,8 +319,283 @@ export function getUserNotes(options: {
       const filter = options.reference;
       results = results.filter((n) => anchorsMatchReference(n.anchorsJson, filter));
     }
+    if (options.query) {
+      const needle = options.query.toLowerCase();
+      results = results.filter((n) => n.content !== null && n.content.toLowerCase().includes(needle));
+    }
 
     return options.limit ? results.slice(0, options.limit) : results;
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Schema introspection helpers ────────────────────────────────────────────
+// Clippings.db and PassageList.db layouts vary across Logos versions, so these
+// readers discover tables/columns at runtime instead of assuming a fixed schema.
+
+function listTables(db: Database.Database): string[] {
+  const rows = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+  ).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
+}
+
+function tableColumns(db: Database.Database, table: string): string[] {
+  const rows = db.prepare(`PRAGMA table_info("${table.replace(/"/g, '""')}")`).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
+}
+
+function pickColumn(columns: string[], candidates: string[]): string | null {
+  const lower = new Map(columns.map((c) => [c.toLowerCase(), c]));
+  for (const candidate of candidates) {
+    const found = lower.get(candidate.toLowerCase());
+    if (found) return found;
+  }
+  return null;
+}
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+// ─── Clippings ───────────────────────────────────────────────────────────────
+
+export interface ClippingResult {
+  title: string | null;
+  content: string | null;
+  resourceId: string | null;
+  createdDate: string | null;
+  modifiedDate: string | null;
+  references: string[];
+}
+
+export function getClippings(options: { limit?: number } = {}): ClippingResult[] {
+  const db = openDb(getDbPaths().clippings);
+  try {
+    const tables = listTables(db);
+    const table = tables.find((t) => t.toLowerCase() === "clippings")
+      ?? tables.find((t) => /clip/i.test(t));
+    if (!table) {
+      throw new Error(`No clippings table found in Clippings.db (tables: ${tables.join(", ") || "none"}).`);
+    }
+
+    const columns = tableColumns(db, table);
+    const contentCol = pickColumn(columns, ["ContentRichText", "Content", "Text", "ClippingText", "Excerpt", "PlainText"]);
+    if (!contentCol) {
+      throw new Error(`No content column found in ${table} (columns: ${columns.join(", ")}).`);
+    }
+    const titleCol = pickColumn(columns, ["Title"]);
+    const resourceCol = pickColumn(columns, ["ResourceId", "Resource"]);
+    const anchorCol = pickColumn(columns, ["AnchorsJson", "Anchor", "Reference", "TextRange", "SavedTextRange", "Position"]);
+    const createdCol = pickColumn(columns, ["CreatedDate"]);
+    const modifiedCol = pickColumn(columns, ["ModifiedDate"]);
+    const deletedCol = pickColumn(columns, ["IsDeleted"]);
+
+    const selected = [contentCol, titleCol, resourceCol, anchorCol, createdCol, modifiedCol]
+      .filter((c): c is string => c !== null)
+      .map(quoteIdent);
+    let sql = `SELECT ${selected.join(", ")} FROM ${quoteIdent(table)}`;
+    if (deletedCol) sql += ` WHERE ${quoteIdent(deletedCol)} = 0`;
+    const orderCol = modifiedCol ?? createdCol;
+    if (orderCol) sql += ` ORDER BY ${quoteIdent(orderCol)} DESC`;
+    sql += " LIMIT ?";
+
+    const rows = db.prepare(sql).all(options.limit ?? 25) as Array<Record<string, string | null>>;
+
+    return rows.map((r) => {
+      const rawContent = contentCol ? r[contentCol] : null;
+      const anchor = anchorCol ? r[anchorCol] : null;
+      return {
+        title: titleCol ? r[titleCol] : null,
+        content: stripRichText(rawContent),
+        resourceId: resourceCol ? r[resourceCol] : null,
+        createdDate: createdCol ? r[createdCol] : null,
+        modifiedDate: modifiedCol ? r[modifiedCol] : null,
+        references: describeBibleAnchors(anchor),
+      };
+    }).filter((c) => c.content !== null || c.title !== null);
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Passage Lists ───────────────────────────────────────────────────────────
+
+export interface PassageListResult {
+  title: string | null;
+  passages: string[];
+}
+
+export function getPassageLists(options: { limit?: number } = {}): PassageListResult[] {
+  const db = openDb(getDbPaths().passageLists);
+  try {
+    const tables = listTables(db);
+
+    // Items table: any table with a reference-bearing column
+    let itemsTable: string | null = null;
+    let referenceCol: string | null = null;
+    for (const table of tables) {
+      const col = pickColumn(tableColumns(db, table), ["Reference", "ReferencesJson", "Passage", "Anchor", "AnchorsJson"]);
+      if (col) {
+        itemsTable = table;
+        referenceCol = col;
+        break;
+      }
+    }
+    if (!itemsTable || !referenceCol) {
+      throw new Error(`No passage table found in PassageList.db (tables: ${tables.join(", ") || "none"}).`);
+    }
+
+    // List (metadata) table: a different table carrying a Title column
+    const listTable = tables.find((t) => t !== itemsTable && pickColumn(tableColumns(db, t), ["Title"]) !== null) ?? null;
+
+    const itemColumns = tableColumns(db, itemsTable);
+    const itemDeletedCol = pickColumn(itemColumns, ["IsDeleted"]);
+    const listKeyCol = listTable
+      ? pickColumn(itemColumns, [`${listTable.replace(/s$/, "")}Id`, "PassageListId", "ListId", "DocumentId", "ParentId"])
+      : null;
+
+    const decodePassage = (raw: string | null): string[] => {
+      if (!raw) return [];
+      const decoded = describeBibleAnchors(raw);
+      return decoded.length > 0 ? decoded : [raw];
+    };
+
+    if (listTable && listKeyCol) {
+      const listColumns = tableColumns(db, listTable);
+      const listTitleCol = pickColumn(listColumns, ["Title"])!;
+      const listIdCol = pickColumn(listColumns, ["Id", `${listTable.replace(/s$/, "")}Id`, "DocumentId", "ExternalId"]);
+      const listDeletedCol = pickColumn(listColumns, ["IsDeleted"]);
+
+      if (listIdCol) {
+        let sql = `
+          SELECT l.${quoteIdent(listTitleCol)} AS ListTitle, i.${quoteIdent(referenceCol)} AS Ref
+          FROM ${quoteIdent(itemsTable)} i
+          JOIN ${quoteIdent(listTable)} l ON i.${quoteIdent(listKeyCol)} = l.${quoteIdent(listIdCol)}
+        `;
+        const conditions: string[] = [];
+        if (itemDeletedCol) conditions.push(`i.${quoteIdent(itemDeletedCol)} = 0`);
+        if (listDeletedCol) conditions.push(`l.${quoteIdent(listDeletedCol)} = 0`);
+        if (conditions.length > 0) sql += ` WHERE ${conditions.join(" AND ")}`;
+
+        const rows = db.prepare(sql).all() as Array<{ ListTitle: string | null; Ref: string | null }>;
+        const grouped = new Map<string, string[]>();
+        for (const row of rows) {
+          const key = row.ListTitle ?? "(untitled list)";
+          const passages = grouped.get(key) ?? [];
+          passages.push(...decodePassage(row.Ref));
+          grouped.set(key, passages);
+        }
+        return Array.from(grouped.entries())
+          .map(([title, passages]) => ({ title, passages }))
+          .slice(0, options.limit ?? 25);
+      }
+    }
+
+    // Fallback: flat dump of the items table
+    let sql = `SELECT ${quoteIdent(referenceCol)} AS Ref FROM ${quoteIdent(itemsTable)}`;
+    if (itemDeletedCol) sql += ` WHERE ${quoteIdent(itemDeletedCol)} = 0`;
+    sql += " LIMIT ?";
+    const rows = db.prepare(sql).all(options.limit ?? 200) as Array<{ Ref: string | null }>;
+    const passages = rows.flatMap((r) => decodePassage(r.Ref));
+    return passages.length > 0 ? [{ title: null, passages }] : [];
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Today's Reading ─────────────────────────────────────────────────────────
+
+export interface TodaysReadingPlan {
+  title: string;
+  author: string;
+  path: string;
+  remainingItems: number;
+  nextItems: string[];
+}
+
+export function getTodaysReading(options: { perPlanLimit?: number } = {}): TodaysReadingPlan[] {
+  const db = openDb(getDbPaths().readingLists);
+  try {
+    const statuses = db.prepare(`
+      SELECT Title, Author, Path FROM ReadingListStatuses
+      WHERE IsDeleted = 0 AND Status = 1
+    `).all() as Array<{ Title: string; Author: string; Path: string }>;
+    if (statuses.length === 0) return [];
+
+    const itemColumns = tableColumns(db, "Items");
+    const labelCol = pickColumn(itemColumns, ["Title", "Reference", "StartReference", "Description"]);
+    const orderCol = pickColumn(itemColumns, ["SortOrder", "Rank", "Position"]) ?? "rowid";
+
+    const perPlan = options.perPlanLimit ?? 3;
+    return statuses.map((status) => {
+      const rows = db.prepare(`
+        SELECT ItemId${labelCol ? `, ${quoteIdent(labelCol)} AS Label` : ""}
+        FROM Items
+        WHERE ReadingListPathNormalized = ? AND IsRead = 0
+        ORDER BY ${orderCol === "rowid" ? "rowid" : quoteIdent(orderCol)} ASC
+      `).all(status.Path) as Array<{ ItemId: string; Label?: string | null }>;
+
+      return {
+        title: status.Title,
+        author: status.Author,
+        path: status.Path,
+        remainingItems: rows.length,
+        nextItems: rows.slice(0, perPlan).map((r) => r.Label ?? r.ItemId),
+      };
+    }).filter((plan) => plan.remainingItems > 0);
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Highlight Summary ───────────────────────────────────────────────────────
+
+export interface HighlightSummaryEntry {
+  key: string;
+  count: number;
+  lastSyncDate: string | null;
+}
+
+export function getHighlightSummary(groupBy: "style" | "resource"): HighlightSummaryEntry[] {
+  const db = openDb(getDbPaths().visualMarkup);
+  try {
+    const column = groupBy === "style" ? "MarkupStyleName" : "ResourceId";
+    const rows = db.prepare(`
+      SELECT ${column} AS Key, COUNT(*) AS Count, MAX(SyncDate) AS LastSyncDate
+      FROM Markup WHERE IsDeleted = 0
+      GROUP BY ${column}
+      ORDER BY Count DESC, LastSyncDate DESC
+    `).all() as Array<{ Key: string; Count: number; LastSyncDate: string | null }>;
+
+    return rows.map((r) => ({ key: r.Key, count: r.Count, lastSyncDate: r.LastSyncDate }));
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Notebooks ───────────────────────────────────────────────────────────────
+
+export interface NotebookInfo {
+  externalId: string;
+  title: string;
+  noteCount: number;
+}
+
+export function listNotebooks(): NotebookInfo[] {
+  const db = openDb(getDbPaths().notes);
+  try {
+    const rows = db.prepare(`
+      SELECT nb.ExternalId, nb.Title,
+             (SELECT COUNT(*) FROM Notes n
+              WHERE n.NotebookExternalId = nb.ExternalId AND n.IsDeleted = 0 AND n.IsTrashed = 0) AS NoteCount
+      FROM Notebooks nb
+      WHERE nb.IsDeleted = 0
+      ORDER BY nb.Title
+    `).all() as Array<{ ExternalId: string; Title: string; NoteCount: number }>;
+
+    return rows.map((r) => ({ externalId: r.ExternalId, title: r.Title, noteCount: r.NoteCount }));
   } finally {
     db.close();
   }

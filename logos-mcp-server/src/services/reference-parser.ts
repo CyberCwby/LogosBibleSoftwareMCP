@@ -357,6 +357,36 @@ export function bookNameFromNumber(bookNumber: number): string | null {
   return BOOKS_IN_ORDER[bookNumber - 1] ?? null;
 }
 
+export function bookNumberFromName(book: string): number | null {
+  const index = BOOKS_IN_ORDER.indexOf(book);
+  return index === -1 ? null : index + 1;
+}
+
+/**
+ * Convert a human-readable reference to a Logos bible milestone
+ * ("Jeremiah 1:1" -> "bible.24.1.1"), the format open_resource expects.
+ * Chapter-only references become "bible.N.C"; ranges repeat the book number.
+ */
+export function toBibleMilestone(input: string): string {
+  const ref = parseReference(input);
+  const bookNumber = bookNumberFromName(ref.book);
+  if (bookNumber === null) {
+    throw new Error(`No bible milestone book number for: "${ref.book}"`);
+  }
+
+  let result = `bible.${bookNumber}.${ref.chapter}`;
+  if (ref.verse !== undefined) {
+    result += `.${ref.verse}`;
+  }
+  if (ref.endChapter !== undefined && (ref.endChapter !== ref.chapter || ref.endVerse !== undefined)) {
+    result += `-${bookNumber}.${ref.endChapter}`;
+    if (ref.endVerse !== undefined) {
+      result += `.${ref.endVerse}`;
+    }
+  }
+  return result;
+}
+
 // ─── toHumanReadable ────────────────────────────────────────────────────────
 
 export function toHumanReadable(logosRef: string): string {
