@@ -1,8 +1,7 @@
 import { execFile } from "child_process";
 import { writeFile, unlink } from "fs/promises";
-import { tmpdir } from "os";
+import { platform, tmpdir } from "os";
 import { join } from "path";
-import { platform } from "os";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
@@ -14,33 +13,39 @@ export interface ResourceTextResult {
   pageCount: number;
 }
 
-export interface ResourceTextError {
-  error: string;
-  availableTabs?: string[];
-}
+// The script takes its inputs as PowerShell parameters (passed safely through
+// the execFile argument array) rather than string interpolation, so tab names
+// containing quotes or wildcard characters cannot break it.
+const AUTOMATION_SCRIPT = `param(
+    [string]$TabName = "",
+    [int]$MaxPages = 1
+)
 
-/**
- * Build the PowerShell script that uses Windows UI Automation to read
- * text from the active Logos resource panel.
- */
-function buildScript(tabName: string, maxPages: number): string {
-  // Escape the tab name for PowerShell string interpolation
-  const safeTabName = tabName.replace(/'/g, "''");
-
-  return `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
 function Write-Json($obj) { $obj | ConvertTo-Json -Depth 3 -Compress }
 
+function Get-DocumentText($doc) {
+    foreach ($pat in $doc.GetSupportedPatterns()) {
+        if ($pat.ProgrammaticName -eq "ValuePatternIdentifiers.Pattern") {
+            return $doc.GetCurrentPattern($pat).Current.Value
+        }
+        if ($pat.ProgrammaticName -eq "TextPatternIdentifiers.Pattern") {
+            return $doc.GetCurrentPattern($pat).DocumentRange.GetText(-1)
+        }
+    }
+    return ""
+}
+
 try {
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
     $proc = Get-Process -Name "Logos" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $proc) {
         Write-Json @{ success = $false; error = "Logos is not running" }
         exit
     }
 
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
     $pidCond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
         $proc.Id
@@ -66,46 +71,44 @@ try {
         [System.Windows.Automation.ControlType]::Document
     )
 
-    $candidates = @()
-    $cefDocs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cefCond)
-    foreach ($d in $cefDocs) { $candidates += $d }
-    $wpfDocs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $docTypeCond)
-    foreach ($d in $wpfDocs) { $candidates += $d }
-
-    if ($candidates.Count -eq 0) {
-        Write-Json @{ success = $false; error = "No document content found in Logos. Make sure a resource is open." }
-        exit
-    }
-
-    # --- Walk up from each candidate to find its parent TabItem ---
     $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $wantTab = $TabName.ToLowerInvariant()
     $targetDoc = $null
     $targetTab = ""
-    $wantTab = '${safeTabName}'
 
-    foreach ($doc in $candidates) {
-        $el = $doc
-        for ($i = 0; $i -lt 15; $i++) {
-            $el = $walker.GetParent($el)
-            if (-not $el) { break }
-            if ($el.Current.ControlType.ProgrammaticName -eq "ControlType.TabItem") {
-                $tn = $el.Current.Name
-                if ($wantTab -eq "" -or $tn -like "*$wantTab*") {
-                    # Verify this element actually has text content
-                    $pats = $doc.GetSupportedPatterns()
-                    $hasTextOrValue = $false
-                    foreach ($p in $pats) {
-                        if ($p.ProgrammaticName -match "Value|Text") { $hasTextOrValue = $true; break }
+    # Panels render asynchronously after open_resource, so poll briefly before
+    # concluding there is nothing to read.
+    for ($attempt = 0; $attempt -lt 6 -and -not $targetDoc; $attempt++) {
+        if ($attempt -gt 0) { Start-Sleep -Milliseconds 500 }
+
+        $candidates = @()
+        $cefDocs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cefCond)
+        foreach ($d in $cefDocs) { $candidates += $d }
+        $wpfDocs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $docTypeCond)
+        foreach ($d in $wpfDocs) { $candidates += $d }
+
+        foreach ($doc in $candidates) {
+            $el = $doc
+            for ($i = 0; $i -lt 15; $i++) {
+                $el = $walker.GetParent($el)
+                if (-not $el) { break }
+                if ($el.Current.ControlType.ProgrammaticName -eq "ControlType.TabItem") {
+                    $tn = $el.Current.Name
+                    if ($wantTab -eq "" -or $tn.ToLowerInvariant().Contains($wantTab)) {
+                        $hasTextOrValue = $false
+                        foreach ($p in $doc.GetSupportedPatterns()) {
+                            if ($p.ProgrammaticName -match "Value|Text") { $hasTextOrValue = $true; break }
+                        }
+                        if ($hasTextOrValue) {
+                            $targetDoc = $doc
+                            $targetTab = $tn
+                        }
                     }
-                    if ($hasTextOrValue) {
-                        $targetDoc = $doc
-                        $targetTab = $tn
-                    }
+                    break
                 }
-                break
             }
+            if ($targetDoc) { break }
         }
-        if ($targetDoc) { break }
     }
 
     if (-not $targetDoc) {
@@ -118,35 +121,23 @@ try {
         foreach ($t in $tabs) {
             if ($t.Current.Name.Length -gt 0) { $tabNames += $t.Current.Name }
         }
-        Write-Json @{ success = $false; error = "No matching document found for tab filter"; availableTabs = $tabNames }
+        if ($TabName -ne "") {
+            Write-Json @{ success = $false; error = "No matching document found for tab filter"; availableTabs = $tabNames }
+        } else {
+            Write-Json @{ success = $false; error = "No document content found in Logos. Make sure a resource is open."; availableTabs = $tabNames }
+        }
         exit
     }
 
-    # --- Extract text via ValuePattern or TextPattern ---
-    $text = ""
-    $patterns = $targetDoc.GetSupportedPatterns()
-    foreach ($pat in $patterns) {
-        if ($pat.ProgrammaticName -eq "ValuePatternIdentifiers.Pattern") {
-            $vp = $targetDoc.GetCurrentPattern($pat)
-            $text = $vp.Current.Value
-            break
-        }
-        if ($pat.ProgrammaticName -eq "TextPatternIdentifiers.Pattern") {
-            $tp = $targetDoc.GetCurrentPattern($pat)
-            $text = $tp.DocumentRange.GetText(-1)
-            break
-        }
-    }
-
+    $text = Get-DocumentText $targetDoc
     if ($text.Length -eq 0) {
         Write-Json @{ success = $false; error = "Document found but no text content available" }
         exit
     }
 
-    $pageCount = 1
-    $maxPages = ${maxPages}
+    $pages = @([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($text)))
 
-    if ($maxPages -gt 1) {
+    if ($MaxPages -gt 1) {
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type @"
 using System;
@@ -160,59 +151,103 @@ public class W32 {
         [void][W32]::ShowWindow($hwnd, 9)
         Start-Sleep -Milliseconds 300
         [void][W32]::SetForegroundWindow($hwnd)
+        # Focus the document panel itself so PGDN scrolls it, not whichever
+        # control happened to hold keyboard focus.
+        try { $targetDoc.SetFocus() } catch {}
         Start-Sleep -Milliseconds 300
 
-        $allTexts = @($text)
-        $seenKeys = @{}
-        $trimmed = $text.TrimStart()
-        if ($trimmed.Length -gt 0) {
-            $seenKeys[$trimmed.Substring(0, [Math]::Min(80, $trimmed.Length))] = $true
-        }
-
-        for ($pg = 1; $pg -lt $maxPages; $pg++) {
+        $prev = $text
+        for ($pg = 1; $pg -lt $MaxPages; $pg++) {
             [System.Windows.Forms.SendKeys]::SendWait("{PGDN}")
             Start-Sleep -Milliseconds 400
 
-            $newText = ""
-            foreach ($pat in $patterns) {
-                if ($pat.ProgrammaticName -eq "ValuePatternIdentifiers.Pattern") {
-                    $vp2 = $targetDoc.GetCurrentPattern($pat)
-                    $newText = $vp2.Current.Value
-                    break
-                }
-                if ($pat.ProgrammaticName -eq "TextPatternIdentifiers.Pattern") {
-                    $tp2 = $targetDoc.GetCurrentPattern($pat)
-                    $newText = $tp2.DocumentRange.GetText(-1)
-                    break
-                }
-            }
-
-            $ntrim = $newText.TrimStart()
-            if ($ntrim.Length -eq 0) { break }
-            $nkey = $ntrim.Substring(0, [Math]::Min(80, $ntrim.Length))
-            if ($seenKeys.ContainsKey($nkey)) { break }
-            $seenKeys[$nkey] = $true
-            $allTexts += $newText
+            $newText = Get-DocumentText $targetDoc
+            if ($newText.TrimStart().Length -eq 0) { break }
+            if ($newText -eq $prev) { break }
+            $pages += [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($newText))
+            $prev = $newText
         }
-
-        $text = ($allTexts | ForEach-Object { $_.Trim() }) -join "\`n\`n"
-        $pageCount = $allTexts.Count
     }
-
-    $textBytes = [System.Text.Encoding]::UTF8.GetBytes($text)
-    $textBase64 = [Convert]::ToBase64String($textBytes)
 
     Write-Json @{
         success = $true
         tabName = $targetTab
-        textBase64 = $textBase64
-        charCount = $text.Length
-        pageCount = $pageCount
+        pages = $pages
     }
 } catch {
     Write-Json @{ success = $false; error = $_.Exception.Message }
 }
 `;
+
+/**
+ * Merge successive page captures into one text. Consecutive pages usually
+ * overlap (PGDN scrolls slightly less than a viewport, and CEF panels
+ * re-render shared content), so the shared region is detected and dropped
+ * instead of duplicated.
+ */
+export function mergePages(pages: string[]): { text: string; pageCount: number } {
+  const cleaned: string[] = [];
+  for (const raw of pages) {
+    const page = raw.trim();
+    if (!page) continue;
+    if (cleaned.length > 0 && cleaned[cleaned.length - 1] === page) continue;
+    cleaned.push(page);
+  }
+
+  if (cleaned.length === 0) return { text: "", pageCount: 0 };
+
+  let text = cleaned[0];
+  for (let i = 1; i < cleaned.length; i += 1) {
+    const next = cleaned[i];
+    const overlap = findOverlap(text, next);
+    text += overlap > 0 ? next.slice(overlap) : `\n\n${next}`;
+  }
+  return { text, pageCount: cleaned.length };
+}
+
+// Length of the longest suffix of `prev` that is also a prefix of `next`.
+// Overlaps below the minimum are ignored to avoid false matches on short
+// repeated phrases.
+const MIN_OVERLAP_CHARS = 40;
+
+function findOverlap(prev: string, next: string): number {
+  const max = Math.min(prev.length, next.length);
+  for (let length = max; length >= MIN_OVERLAP_CHARS; length -= 1) {
+    if (prev.endsWith(next.slice(0, length))) return length;
+  }
+  return 0;
+}
+
+interface AutomationOutput {
+  success: boolean;
+  tabName?: string;
+  pages?: string[];
+  error?: string;
+  availableTabs?: string[];
+}
+
+/**
+ * Extract the result JSON from raw PowerShell stdout, tolerating warnings or
+ * other noise printed before it (the result is always the last JSON line).
+ */
+export function parseAutomationOutput(rawOutput: string): AutomationOutput {
+  const lines = rawOutput.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    if (!line.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(line) as AutomationOutput;
+      // ConvertTo-Json collapses a single-element array property in some
+      // PowerShell versions; normalize pages back to an array.
+      if (parsed.pages !== undefined && !Array.isArray(parsed.pages)) {
+        parsed.pages = [parsed.pages as unknown as string];
+      }
+      return parsed;
+    } catch {
+      // Not the result line — keep scanning.
+    }
+  }
+  throw new Error(`No JSON in PowerShell output. Raw: ${rawOutput.substring(0, 500)}`);
 }
 
 /**
@@ -231,18 +266,29 @@ export async function readResourceText(
   }
 
   const pages = Math.max(1, Math.min(maxPages ?? 1, 50));
-  const script = buildScript(tabName ?? "", pages);
 
   const scriptPath = join(tmpdir(), `logos-uia-${process.pid}.ps1`);
-  await writeFile(scriptPath, script, "utf-8");
+  // The BOM makes Windows PowerShell 5.1 read the file as UTF-8; without it,
+  // non-ASCII characters in the script are interpreted as ANSI.
+  await writeFile(scriptPath, "\ufeff" + AUTOMATION_SCRIPT, "utf-8");
 
   let rawOutput = "";
   try {
     try {
       const { stdout } = await execFileAsync(
         "powershell",
-        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
-        { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 },
+        [
+          "-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+          "-File", scriptPath,
+          "-TabName", tabName ?? "",
+          "-MaxPages", String(pages),
+        ],
+        {
+          // Base + per-page budget: each page costs foreground/scroll delays.
+          timeout: 30_000 + pages * 2_500,
+          maxBuffer: 10 * 1024 * 1024,
+          windowsHide: true,
+        },
       );
       rawOutput = stdout;
     } catch (e: unknown) {
@@ -250,37 +296,34 @@ export async function readResourceText(
         rawOutput = (e as { stdout?: string }).stdout ?? "";
       }
       if (!rawOutput) {
+        const stderr = e && typeof e === "object" && "stderr" in e ? (e as { stderr?: string }).stderr : "";
         const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(`PowerShell execution failed: ${msg}`);
+        throw new Error(`PowerShell execution failed: ${msg}${stderr ? `\n${String(stderr).substring(0, 300)}` : ""}`);
       }
     }
 
-    const jsonStart = rawOutput.indexOf("{");
-    if (jsonStart === -1) {
-      throw new Error(`No JSON in output. Raw: ${rawOutput.substring(0, 500)}`);
-    }
-
-    const result = JSON.parse(rawOutput.substring(jsonStart));
+    const result = parseAutomationOutput(rawOutput);
 
     if (!result.success) {
       const errMsg = result.error ?? "Unknown error reading resource text";
-      if (result.availableTabs) {
+      if (result.availableTabs && result.availableTabs.length > 0) {
         throw new Error(`${errMsg}\nOpen tabs: ${result.availableTabs.join(", ")}`);
       }
       throw new Error(errMsg);
     }
 
-    return {
-      tabName: result.tabName,
-      text: Buffer.from(result.textBase64, "base64").toString("utf-8"),
-      charCount: result.charCount,
-      pageCount: result.pageCount,
-    };
-  } catch (e: unknown) {
-    if (e instanceof SyntaxError) {
-      throw new Error(`Failed to parse output. Raw: ${rawOutput.substring(0, 500)}`);
+    const decoded = (result.pages ?? []).map((b64) => Buffer.from(b64, "base64").toString("utf-8"));
+    const merged = mergePages(decoded);
+    if (merged.text.length === 0) {
+      throw new Error("Document found but no text content available");
     }
-    throw e;
+
+    return {
+      tabName: result.tabName ?? "",
+      text: merged.text,
+      charCount: merged.text.length,
+      pageCount: merged.pageCount,
+    };
   } finally {
     await unlink(scriptPath).catch(() => {});
   }

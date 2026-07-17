@@ -602,8 +602,8 @@ export function registerTools(server: McpServer) {
     description: "[EXPERIMENTAL] Read the visible text from a resource panel open in Logos Bible Software (Windows only). " +
       "This is a makeshift workaround: Logos resource files are encrypted and there is no official API for reading resource content, so this tool uses the Windows UI Automation accessibility API to scrape whatever text is currently rendered on screen. " +
       "Limitations: Windows only, captures only visible/rendered text (~2000 chars per page), scrolling brings Logos to the foreground and sends keystrokes, no text structure or formatting is preserved. " +
-      "Usage: first call open_resource to navigate to the desired section, then call this tool to read the text. " +
-      "Set max_pages > 1 to scroll through and collect additional pages of content.",
+      "Usage: first call open_resource to navigate to the desired section, then call this tool to read the text (it waits briefly for the panel to render). " +
+      "Set max_pages > 1 to scroll through additional pages; overlapping content between pages is merged automatically.",
     inputSchema: {
       tab_name: z.string().optional().describe("Partial tab/resource name to match (e.g., 'Guide for the Perplexed'). If omitted, reads the first available document panel."),
       max_pages: limitSchema("Number of pages to read (default: 1 = visible text only, max: 50). Values > 1 will bring Logos to the foreground and scroll through the document.", 50),
