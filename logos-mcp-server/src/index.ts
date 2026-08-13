@@ -45,10 +45,18 @@ function err(s: string) {
 }
 
 // Success message for UI tools, naming where the action landed (desktop app
-// vs. Logos web app) plus any deep-linking caveat.
-function launched(base: string, result: { target?: "desktop" | "web"; note?: string }) {
+// vs. Logos web app) plus any deep-linking caveat. `what` is the noun phrase
+// for the thing launched (e.g. 'Romans 8', 'word study for "grace"') so the
+// verb can reflect certainty: an unverified desktop launch (Windows rundll32
+// exits 0 even for a broken protocol handler) is worded "Sent ... to Logos",
+// never "Opened".
+function launched(what: string, result: { target?: "desktop" | "web"; note?: string; verified?: boolean }) {
+  const note = result.note ? ` ${result.note}` : "";
+  if (result.target === "desktop" && result.verified === false) {
+    return text(`Sent ${what} to Logos.${note}`);
+  }
   const location = result.target === "web" ? "the Logos web app" : "Logos";
-  return text(`${base} in ${location}.${result.note ? ` ${result.note}` : ""}`);
+  return text(`Opened ${what} in ${location}.${note}`);
 }
 
 type ToolResponse = ReturnType<typeof text> | ReturnType<typeof err>;
@@ -130,7 +138,7 @@ export function registerTools(server: McpServer) {
   }, async ({ reference }: { reference: string }) => {
     const result = await navigateToPassage(reference);
     return result.success
-      ? launched(`Opened ${reference}`, result)
+      ? launched(reference, result)
       : err(`Failed to open passage: ${result.error}`);
   });
 
@@ -344,7 +352,7 @@ export function registerTools(server: McpServer) {
   }, async ({ word }: { word: string }) => {
     const result = await openWordStudy(word);
     return result.success
-      ? launched(`Opened word study for "${word}"`, result)
+      ? launched(`word study for "${word}"`, result)
       : err(`Failed to open word study: ${result.error}`);
   });
 
@@ -356,7 +364,7 @@ export function registerTools(server: McpServer) {
   }, async ({ topic }: { topic: string }) => {
     const result = await openFactbook(topic);
     return result.success
-      ? launched(`Opened Factbook entry for "${topic}"`, result)
+      ? launched(`Factbook entry for "${topic}"`, result)
       : err(`Failed to open Factbook: ${result.error}`);
   });
 
@@ -455,7 +463,7 @@ export function registerTools(server: McpServer) {
     const result = await openResource(resource_id, milestone);
     const refStr = reference ? ` at ${milestone}` : "";
     return result.success
-      ? launched(`Opened resource \`${resource_id}\`${refStr}`, result)
+      ? launched(`resource \`${resource_id}\`${refStr}`, result)
       : err(`Failed to open resource: ${result.error}`);
   });
 
@@ -470,7 +478,7 @@ export function registerTools(server: McpServer) {
   }, async ({ guide_type, reference }: { guide_type: string; reference: string }) => {
     const result = await openGuide(guide_type, reference);
     return result.success
-      ? launched(`Opened ${guide_type} for ${reference}`, result)
+      ? launched(`${guide_type} for ${reference}`, result)
       : err(`Failed to open guide: ${result.error}`);
   });
 
@@ -484,7 +492,7 @@ export function registerTools(server: McpServer) {
   }, async ({ query }: { query: string }) => {
     const result = await searchAll(query);
     return result.success
-      ? launched(`Opened search for "${query}" across all resources`, result)
+      ? launched(`search for "${query}" across all resources`, result)
       : err(`Failed to open search via ${result.launcher ?? "the platform launcher"}: ${result.error}`);
   });
 

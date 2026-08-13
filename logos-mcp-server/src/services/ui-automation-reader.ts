@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { randomUUID } from "crypto";
 import { writeFile, unlink } from "fs/promises";
 import { platform, tmpdir } from "os";
 import { join } from "path";
@@ -267,7 +268,10 @@ export async function readResourceText(
 
   const pages = Math.max(1, Math.min(maxPages ?? 1, 50));
 
-  const scriptPath = join(tmpdir(), `logos-uia-${process.pid}.ps1`);
+  // Unique per invocation (not just per process): concurrent tool calls must
+  // not share a script path, or one call's cleanup unlinks the file while the
+  // other call's PowerShell may not have read it yet.
+  const scriptPath = join(tmpdir(), `logos-uia-${process.pid}-${randomUUID()}.ps1`);
   // The BOM makes Windows PowerShell 5.1 read the file as UTF-8; without it,
   // non-ASCII characters in the script are interpreted as ANSI.
   await writeFile(scriptPath, "\ufeff" + AUTOMATION_SCRIPT, "utf-8");

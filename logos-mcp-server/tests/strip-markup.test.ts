@@ -21,6 +21,13 @@ describe("stripXml", () => {
   it("returns null for empty string", () => {
     expect(stripXml("")).toBeNull();
   });
+
+  it("decodes doubly-escaped entities only once (regression: &amp; decoded last)", () => {
+    // Literal text discussing markup: "&amp;lt;" is an escaped "&lt;" and
+    // must render as "&lt;", not be double-decoded into "<".
+    expect(stripXml("use &amp;lt; to escape")).toBe("use &lt; to escape");
+    expect(stripXml("&amp;quot; is an escaped quote")).toBe("&quot; is an escaped quote");
+  });
 });
 
 describe("stripRichText", () => {
@@ -55,5 +62,20 @@ describe("stripRichText", () => {
   it("handles Text attributes with single quotes", () => {
     const xaml = "<Paragraph><Run Text='Grace alone'/></Paragraph>";
     expect(stripRichText(xaml)).toBe("Grace alone");
+  });
+
+  it("keeps apostrophes inside double-quoted Text attributes (regression: truncation at first apostrophe)", () => {
+    const xaml = '<Paragraph><Run Text="God\'s love endures forever" /></Paragraph>';
+    expect(stripRichText(xaml)).toBe("God's love endures forever");
+  });
+
+  it("keeps double quotes inside single-quoted Text attributes", () => {
+    const xaml = "<Paragraph><Run Text='He said &quot;come&quot; — but also \"raw\" quotes'/></Paragraph>";
+    expect(stripRichText(xaml)).toBe('He said &quot;come&quot; — but also "raw" quotes');
+  });
+
+  it("handles a mix of quote styles with apostrophes across multiple Runs", () => {
+    const xaml = '<Paragraph><Run Text="It\'s written:"/><Run Text=\'the Lord"s\'/></Paragraph>';
+    expect(stripRichText(xaml)).toBe('It\'s written: the Lord"s');
   });
 });

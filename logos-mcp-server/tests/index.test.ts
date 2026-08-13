@@ -267,6 +267,26 @@ describe("index MCP registration", () => {
     );
   });
 
+  it("words unverified desktop launches as 'Sent … to Logos' and relays the caveat", async () => {
+    const logosApp = await import("../src/services/logos-app.js");
+    vi.mocked(logosApp.navigateToPassage).mockResolvedValueOnce({
+      success: true,
+      command: "logos4:///Bible/Ro8",
+      target: "desktop",
+      verified: false,
+      note: "Note: this launch could not be verified.",
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("navigate_passage");
+    const result = (await tool.handler({ reference: "Romans 8" })) as { content: Array<{ text: string }> };
+
+    expect(result.content[0].text).toBe(
+      "Sent Romans 8 to Logos. Note: this launch could not be verified."
+    );
+  });
+
   it("formats successful Logos navigation responses", async () => {
     const indexModule = await import("../src/index.js");
 
