@@ -151,6 +151,27 @@ describe("readResourceText", () => {
     expect(options.windowsHide).toBe(true);
   });
 
+  it("uses a distinct temp script path per invocation (regression: pid-only path races)", async () => {
+    platformMock.mockReturnValue("win32");
+    respondWith(JSON.stringify({ success: true, tabName: "ESV", pages: [b64("text")] }));
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    await readResourceText();
+    await readResourceText();
+
+    const scriptPaths = execFileMock.mock.calls.map((call) => {
+      const args = call[1] as string[];
+      return args[args.indexOf("-File") + 1];
+    });
+    expect(scriptPaths).toHaveLength(2);
+    // Both paths carry the pid plus a per-call unique suffix…
+    for (const path of scriptPaths) {
+      expect(path).toMatch(new RegExp(`logos-uia-${process.pid}-[0-9a-f-]+\\.ps1$`));
+    }
+    // …and never collide across invocations.
+    expect(scriptPaths[0]).not.toBe(scriptPaths[1]);
+  });
+
   it("scales the timeout with the requested page count", async () => {
     platformMock.mockReturnValue("win32");
     respondWith(JSON.stringify({ success: true, tabName: "ESV", pages: [b64("text")] }));

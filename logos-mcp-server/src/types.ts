@@ -48,6 +48,13 @@ export interface LogosCommandResult {
   launcher?: string;
   /** Where the action landed: the installed desktop app or the Logos web app */
   target?: "desktop" | "web";
+  /**
+   * Whether the launcher's exit status actually confirms the launch.
+   * false on Windows desktop launches: rundll32's FileProtocolHandler exits 0
+   * even when the logos4:/logosres: protocol handler is broken, so "success"
+   * only means the URL was handed to the OS.
+   */
+  verified?: boolean;
   /** Caveat about web-app deep-linking limits, when applicable */
   note?: string;
   error?: string;

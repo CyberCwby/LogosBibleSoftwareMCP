@@ -161,9 +161,15 @@ export function searchCatalog(options: {
       params.push(`%${options.author}%`);
     }
 
+    const limit = options.limit ?? 25;
     sql += " ORDER BY UseCount DESC";
     sql += " LIMIT ?";
-    params.push(options.limit ?? 25);
+    // Relevance scoring (matchScore) runs in JS after the SQL fetch. When a
+    // text query is set, scan a wider candidate window so a strong title
+    // match with a low UseCount cannot be cut by the SQL LIMIT before it is
+    // ever scored (same pattern as sqlite-reader's REFERENCE_SCAN_LIMIT).
+    const scanLimit = options.query ? Math.max(limit * 10, 250) : limit;
+    params.push(scanLimit);
 
     const rows = db.prepare(sql).all(...params) as Array<{
       ResourceId: string;
@@ -198,6 +204,7 @@ export function searchCatalog(options: {
         if (useCountDiff !== 0) return useCountDiff;
         return left.resource.title.localeCompare(right.resource.title);
       })
+      .slice(0, limit)
       .map((entry) => entry.resource);
   } finally {
     db.close();

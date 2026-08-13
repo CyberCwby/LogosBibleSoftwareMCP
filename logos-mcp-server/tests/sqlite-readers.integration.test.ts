@@ -488,4 +488,42 @@ describe("sqlite reader integration", () => {
       title: "Romans",
     });
   });
+
+  it("does not drop an exact-title match with a low UseCount behind the SQL limit (regression)", async () => {
+    // 40 frequently-used substring matches would fill a UseCount-ordered
+    // LIMIT of 25 before relevance scoring ever ran; the never-opened
+    // resource titled exactly "Romans" must still come back first.
+    const inserts = [];
+    for (let i = 1; i <= 40; i += 1) {
+      inserts.push({
+        sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params: [
+          `LLS:BULK${i}`,
+          `Studies Touching on Romans, Volume ${i}`,
+          `STR${i}`,
+          "text.monograph",
+          "Prolific Author",
+          "Romans",
+          "<p>Frequently used</p>",
+          "2000",
+          1,
+          0,
+          1000 + i,
+        ],
+      });
+    }
+    inserts.push({
+      sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      params: ["LLS:EXACT", "Romans", "Rom", "text.monograph.commentary.bible", "Quiet Author", "Romans", "<p>Never opened</p>", "2020", 1, 0, 0],
+    });
+    createDb(dbPaths.catalog, [], inserts);
+
+    const catalogReader = await import("../src/services/catalog-reader.js");
+    const results = catalogReader.searchCatalog({ query: "Romans", limit: 25 });
+
+    // The exact-title match with UseCount 0 survives and wins on relevance…
+    expect(results[0]).toMatchObject({ resourceId: "LLS:EXACT", title: "Romans" });
+    // …while the final result size still honors the requested limit.
+    expect(results).toHaveLength(25);
+  });
 });

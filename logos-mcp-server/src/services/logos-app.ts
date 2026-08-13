@@ -23,6 +23,36 @@ function desktopIsPossible(): boolean {
   return platform() === "win32" || platform() === "darwin";
 }
 
+// On macOS, `open` exits non-zero for an unregistered URL scheme, so a zero
+// exit genuinely confirms the launch. On Windows, rundll32's
+// FileProtocolHandler is fire-and-forget: it exits 0 even when the logos4:
+// protocol handler is broken or unregistered, so a "successful" desktop
+// launch cannot be verified there (and a broken handler will not trip the
+// auto-mode web fallback, which only engages on launcher failure).
+function desktopLaunchIsVerifiable(): boolean {
+  return platform() !== "win32";
+}
+
+const UNVERIFIED_DESKTOP_LAUNCH_NOTE =
+  "Note: Windows reports protocol launches as successful even when the Logos protocol handler is broken, so this launch could not be verified. If nothing appeared in Logos, the logos4:/logosres: handler may be unregistered — reinstall/repair Logos or set LOGOS_MODE=web to use the Logos web app instead.";
+
+function desktopResult(
+  attempt: { success: boolean; error?: string },
+  desktopUrl: string,
+  launcher: string,
+): LogosCommandResult {
+  const verified = attempt.success ? desktopLaunchIsVerifiable() : undefined;
+  return {
+    success: attempt.success,
+    command: desktopUrl,
+    launcher,
+    target: "desktop",
+    verified,
+    note: verified === false ? UNVERIFIED_DESKTOP_LAUNCH_NOTE : undefined,
+    error: attempt.error,
+  };
+}
+
 async function launchUrl(url: string): Promise<{ success: boolean; error?: string }> {
   try {
     if (platform() === "win32") {
@@ -71,14 +101,14 @@ async function openInLogos(target: LaunchTarget): Promise<LogosCommandResult> {
         };
       }
       const attempt = await launchUrl(target.desktopUrl);
-      return { success: attempt.success, command: target.desktopUrl, launcher, target: "desktop", error: attempt.error };
+      return desktopResult(attempt, target.desktopUrl, launcher);
     }
 
     // auto: try the desktop app unless we know it is not running
     if (running !== false) {
       const attempt = await launchUrl(target.desktopUrl);
       if (attempt.success) {
-        return { success: true, command: target.desktopUrl, launcher, target: "desktop" };
+        return desktopResult(attempt, target.desktopUrl, launcher);
       }
       // Protocol launch failed (e.g., logos4: not registered) — fall back to the web app.
     }

@@ -98,6 +98,40 @@ describe("logos-app", () => {
     );
   });
 
+  it("marks Windows desktop launches as unverified (rundll32 exits 0 even for broken handlers)", async () => {
+    platformMock.mockReturnValue("win32");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.navigateToPassage("Romans 8");
+
+    expect(result.success).toBe(true);
+    expect(result.target).toBe("desktop");
+    expect(result.verified).toBe(false);
+    expect(result.note).toMatch(/could not be verified/);
+    expect(result.note).toMatch(/LOGOS_MODE=web/);
+  });
+
+  it("marks Windows desktop launches as unverified in desktop mode too", async () => {
+    vi.stubEnv("LOGOS_MODE", "desktop");
+    platformMock.mockReturnValue("win32");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.openFactbook("Moses");
+
+    expect(result).toMatchObject({ success: true, target: "desktop", verified: false });
+    expect(result.note).toMatch(/could not be verified/);
+  });
+
+  it("treats macOS desktop launches as verified (open exits non-zero for unregistered schemes)", async () => {
+    platformMock.mockReturnValue("darwin");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    const result = await logosApp.navigateToPassage("Romans 8");
+
+    expect(result).toMatchObject({ success: true, target: "desktop", verified: true });
+    expect(result.note).toBeUndefined();
+  });
+
   it("uses tasklist to detect a running Logos process on Windows", async () => {
     platformMock.mockReturnValue("win32");
     execFileMock.mockImplementation((...args: unknown[]) => {
