@@ -214,9 +214,19 @@ export async function getBibleText(
 ): Promise<BibleTextResult> {
   const bibleId = normalizeBibleId(bible);
   const text = await bibliaFetch(`/content/${bibleId}.txt`, { passage });
+  const trimmed = String(text).trim();
+  // The Biblia /content endpoint answers HTTP 200 with an empty body for
+  // passages it cannot resolve (e.g. out-of-range verses like "John 3:99").
+  // Surface that as an error instead of a silent empty "success".
+  if (trimmed.length === 0) {
+    throw new BibliaApiError(
+      "unexpected_response",
+      `The Biblia API returned no text for "${passage}" (${bibleId}). The passage was not recognized — check the reference (book, chapter, and verse range) and that it exists in this Bible version.`
+    );
+  }
   return {
     passage,
-    text: String(text).trim(),
+    text: trimmed,
     bible: bibleId,
   };
 }

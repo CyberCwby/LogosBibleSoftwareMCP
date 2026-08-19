@@ -63,6 +63,25 @@ describe("biblia-api", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects empty passage responses instead of returning a silent empty success", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: "  \n ",
+        contentType: "text/plain",
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.getBibleText("John 3:99")).rejects.toMatchObject({
+      name: "BibliaApiError",
+      code: "unexpected_response",
+      message: expect.stringContaining("John 3:99"),
+    });
+  });
+
   it("classifies 403 responses as authentication failures", async () => {
     fetchMock.mockResolvedValueOnce(
       mockResponse({
