@@ -160,10 +160,23 @@ vi.mock("../src/services/cross-references.js", () => ({
   findCrossReferences: findCrossReferencesMock,
 }));
 
+const getResourceReferenceInfoMock = vi.hoisted(() => vi.fn(() => ({
+  resourceId: "LLS:COMM",
+  title: "Romans Commentary",
+  type: "text.monograph.commentary.bible",
+  milestones: [
+    { category: "Reference" as const, type: "bible", priority: 1000 },
+    { category: "Reference" as const, type: "page", priority: 900 },
+    { category: "Headword" as const, type: "en", priority: 800 },
+  ],
+  referenceSupersets: "bible+leb.45",
+})));
+
 vi.mock("../src/services/catalog-reader.js", () => ({
   searchCatalog: searchCatalogMock,
   getResourceTypeSummary: vi.fn(() => [{ label: "Commentary", count: 12 }]),
   typeLabel: vi.fn(() => "Commentary"),
+  getResourceReferenceInfo: getResourceReferenceInfoMock,
 }));
 
 function getRegisteredTool(name: string) {
@@ -246,6 +259,34 @@ describe("index MCP registration", () => {
     expect(result).toEqual({
       content: [{ type: "text", text: "**John 3:16** (LEB)\n\nSample passage text" }],
     });
+  });
+
+  it("labels expanded verse-level passages as context", async () => {
+    const indexModule = await import("../src/index.js");
+    const referenceParser = await import("../src/services/reference-parser.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_passage_context");
+    const result = (await tool.handler({ passage: "John 3:16" })) as { content: Array<{ text: string }> };
+
+    expect(vi.mocked(referenceParser.expandRange)).toHaveBeenCalledWith("John 3:16", 5);
+    expect(getBibleTextMock).toHaveBeenCalledWith("John 3:11-21", undefined);
+    expect(result.content[0].text).toContain("context around John 3:16");
+  });
+
+  it("says chapter-only passages are returned as-is instead of claiming added context", async () => {
+    const indexModule = await import("../src/index.js");
+    const referenceParser = await import("../src/services/reference-parser.js");
+    vi.mocked(referenceParser.expandRange).mockClear();
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_passage_context");
+    const result = (await tool.handler({ passage: "Romans 8", context_verses: 5 })) as { content: Array<{ text: string }> };
+
+    expect(vi.mocked(referenceParser.expandRange)).not.toHaveBeenCalled();
+    expect(getBibleTextMock).toHaveBeenCalledWith("Romans 8", undefined);
+    expect(result.content[0].text).toContain("Romans 8 is a whole chapter; returned as-is (no verse context added)");
+    expect(result.content[0].text).not.toContain("context around");
   });
 
   it("says when an action landed in the Logos web app and relays the caveat", async () => {
@@ -373,6 +414,104 @@ describe("index MCP registration", () => {
       content: [{ type: "text", text: "BIBLIA_API_KEY is not set. Configure it." }],
       isError: true,
     });
+  });
+
+  it("logs only argument keys, never values, on tool failure", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const bibliaApi = await import("../src/services/biblia-api.js");
+      vi.mocked(bibliaApi.scanReferences).mockRejectedValueOnce(new Error("boom"));
+      const indexModule = await import("../src/index.js");
+
+      indexModule.createServer();
+      const tool = getRegisteredTool("scan_references");
+      const secret = "private manuscript contents that must never reach the log";
+      await tool.handler({ text: secret });
+
+      const logged = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain('"tool":"scan_references"');
+      expect(logged).toContain('"argKeys":["text"]');
+      expect(logged).not.toContain(secret);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("returns readable guidance when a notebook resource read fails (error boundary)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sqliteReader = await import("../src/services/sqlite-reader.js");
+      vi.mocked(sqliteReader.getUserNotes).mockImplementationOnce(() => {
+        throw new Error("Database not found: /missing/notestool.db");
+      });
+      const indexModule = await import("../src/index.js");
+
+      indexModule.createServer();
+      const resource = mcpState.instances.at(-1)?.resources[0];
+      const result = (await resource?.readCallback(
+        new URL("logos://notebooks/nb-1"),
+        { notebookId: "nb-1" }
+      )) as { contents: Array<{ text: string; mimeType: string }> };
+
+      expect(result.contents[0].mimeType).toBe("text/markdown");
+      expect(result.contents[0].text).toContain("# Notebook unavailable");
+      expect(result.contents[0].text).toContain("Database not found: /missing/notestool.db");
+      expect(result.contents[0].text).toContain("LOGOS_DATA_DIR");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("formats get_resource_references with reference types, headwords, coverage, and usage", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:COMM" })) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(getResourceReferenceInfoMock).toHaveBeenCalledWith("LLS:COMM");
+    expect(result.isError).toBeUndefined();
+    const body = result.content[0].text;
+    expect(body).toContain("**Romans Commentary** (`LLS:COMM`)");
+    expect(body).toContain("## Reference Types");
+    expect(body).toContain("- **bible** (priority: 1000) — Bible verse references (e.g., bible.24.1.1 for Jeremiah 1:1)");
+    expect(body).toContain("- **page** (priority: 900) — Page numbers (e.g., page.271)");
+    expect(body).toContain("## Headword Indexes");
+    expect(body).toContain("- **en** (priority: 800)");
+    expect(body).toContain("## Coverage\n`bible+leb.45`");
+    expect(body).toContain("## Usage");
+  });
+
+  it("says when a resource has no indexed reference types", async () => {
+    getResourceReferenceInfoMock.mockReturnValueOnce({
+      resourceId: "LLS:PLAIN",
+      title: "Plain Book",
+      type: "text.monograph",
+      milestones: [],
+      referenceSupersets: null as never,
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:PLAIN" })) as { content: Array<{ text: string }> };
+
+    const body = result.content[0].text;
+    expect(body).toContain("This resource has no indexed reference types.");
+    expect(body).not.toContain("## Reference Types");
+    expect(body).not.toContain("## Coverage");
+  });
+
+  it("reports unknown resources from get_resource_references as tool errors", async () => {
+    getResourceReferenceInfoMock.mockReturnValueOnce(null as never);
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:NOPE" })) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Resource not found: LLS:NOPE");
   });
 
   it("formats resource type summaries", async () => {

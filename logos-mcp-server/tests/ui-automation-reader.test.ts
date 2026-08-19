@@ -144,11 +144,36 @@ describe("readResourceText", () => {
     const [command, args, options] = execFileMock.mock.calls[0] as [string, string[], Record<string, unknown>];
     expect(command).toBe("powershell");
     expect(args).toContain("-File");
-    const tabIndex = args.indexOf("-TabName");
-    expect(args[tabIndex + 1]).toBe('Guide "quoted" *name*');
+    expect(args).toContain('-TabName:Guide "quoted" *name*');
     const pagesIndex = args.indexOf("-MaxPages");
     expect(args[pagesIndex + 1]).toBe("3");
     expect(options.windowsHide).toBe(true);
+  });
+
+  it("binds a leading-dash tab name as a value, not a parameter name (regression)", async () => {
+    platformMock.mockReturnValue("win32");
+    respondWith(JSON.stringify({ success: true, tabName: "-MaxPages Study", pages: [b64("text")] }));
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    await readResourceText("-MaxPages", 2);
+
+    const args = execFileMock.mock.calls[0][1] as string[];
+    // The value rides inside a single `-TabName:<value>` token…
+    expect(args).toContain("-TabName:-MaxPages");
+    // …so no bare "-TabName" token exists for the binder to leave dangling.
+    expect(args).not.toContain("-TabName");
+    expect(args.filter((a) => a === "-MaxPages")).toHaveLength(1);
+  });
+
+  it("omits -TabName entirely when no tab filter is given", async () => {
+    platformMock.mockReturnValue("win32");
+    respondWith(JSON.stringify({ success: true, tabName: "ESV", pages: [b64("text")] }));
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    await readResourceText();
+
+    const args = execFileMock.mock.calls[0][1] as string[];
+    expect(args.some((a) => a.startsWith("-TabName"))).toBe(false);
   });
 
   it("uses a distinct temp script path per invocation (regression: pid-only path races)", async () => {

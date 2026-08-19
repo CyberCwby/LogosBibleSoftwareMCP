@@ -7,7 +7,7 @@
 
 import { mkdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { gzipSync, inflateRawSync } from "zlib";
 
 const DATA_URL = "https://a.openbible.info/data/cross-references.zip";
@@ -26,7 +26,7 @@ const OSIS_BOOK_NUMBERS = {
   "1John": 62, "2John": 63, "3John": 64, Jude: 65, Rev: 66,
 };
 
-function toNumeric(osisRef) {
+export function toNumeric(osisRef) {
   // "Gen.1.1" -> "1.1.1"
   const match = osisRef.match(/^([1-3]?[A-Za-z]+)\.(\d+)\.(\d+)$/);
   if (!match) return null;
@@ -36,7 +36,7 @@ function toNumeric(osisRef) {
 }
 
 // Minimal single-entry ZIP extraction (the archive holds one deflated text file).
-function unzipFirstEntry(buffer) {
+export function unzipFirstEntry(buffer) {
   // End of central directory record
   let eocd = -1;
   for (let i = buffer.length - 22; i >= 0; i -= 1) {
@@ -110,7 +110,14 @@ async function main() {
   console.log("Data: openbible.info cross-references, Creative Commons Attribution license.");
 }
 
-main().catch((error) => {
-  console.error(error.message ?? error);
-  process.exit(1);
-});
+// Only run the download when executed directly (not when imported by tests).
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(error.message ?? error);
+    process.exit(1);
+  });
+}

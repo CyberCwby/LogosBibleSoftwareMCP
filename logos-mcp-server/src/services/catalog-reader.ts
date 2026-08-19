@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { existsSync } from "fs";
 import { getCatalogDbPath } from "../config.js";
 import { stripXml } from "../utils/strip-markup.js";
+import { escapeLikePattern } from "../utils/sql.js";
 import type { CatalogResource, ResourceTypeSummary, ResourceMilestone, ResourceReferenceInfo } from "../types.js";
 
 function openDb(path: string): Database.Database {
@@ -148,17 +149,17 @@ export function searchCatalog(options: {
     const params: unknown[] = [];
 
     if (options.type) {
-      sql += " AND Type LIKE ?";
-      params.push(`%${options.type}%`);
+      sql += " AND Type LIKE ? ESCAPE '\\'";
+      params.push(`%${escapeLikePattern(options.type)}%`);
     }
     if (options.query) {
-      sql += " AND (Title LIKE ? OR Description LIKE ? OR Subjects LIKE ?)";
-      const q = `%${options.query}%`;
+      sql += " AND (Title LIKE ? ESCAPE '\\' OR Description LIKE ? ESCAPE '\\' OR Subjects LIKE ? ESCAPE '\\')";
+      const q = `%${escapeLikePattern(options.query)}%`;
       params.push(q, q, q);
     }
     if (options.author) {
-      sql += " AND Authors LIKE ?";
-      params.push(`%${options.author}%`);
+      sql += " AND Authors LIKE ? ESCAPE '\\'";
+      params.push(`%${escapeLikePattern(options.author)}%`);
     }
 
     const limit = options.limit ?? 25;

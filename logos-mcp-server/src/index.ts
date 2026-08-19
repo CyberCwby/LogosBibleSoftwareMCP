@@ -61,12 +61,15 @@ function launched(what: string, result: { target?: "desktop" | "web"; note?: str
 
 type ToolResponse = ReturnType<typeof text> | ReturnType<typeof err>;
 
-function logToolFailure(toolName: string, error: unknown, context: Record<string, unknown> = {}) {
+function logToolFailure(toolName: string, error: unknown, args: Record<string, unknown> = {}) {
   const payload = {
     level: "error",
     tool: toolName,
     message: error instanceof Error ? error.message : String(error),
-    context,
+    // Only the argument NAMES are logged. Values can contain entire user
+    // documents (scan_references) or private note-search queries, and this
+    // line lands in whatever log store the MCP client keeps.
+    argKeys: Object.keys(args),
   };
   console.error(JSON.stringify(payload));
 }
@@ -171,6 +174,15 @@ export function registerTools(server: McpServer) {
     },
     annotations: CALLS_BIBLIA_API,
   }, async ({ passage, context_verses, bible }: { passage: string; context_verses?: number; bible?: string }) => {
+    // expandRange only widens verse-level references; say so for chapter-only
+    // input rather than labeling the unchanged chapter "context around ...".
+    const parsed = parseReference(passage);
+    if (parsed.verse === undefined) {
+      const result = await getBibleText(passage, bible);
+      return text(
+        `**${result.passage}** (${result.bible}) — ${passage} is a whole chapter; returned as-is (no verse context added)\n\n${result.text}`
+      );
+    }
     const expanded = expandRange(passage, context_verses ?? 5);
     const result = await getBibleText(expanded, bible);
     return text(`**${result.passage}** (${result.bible}) — context around ${passage}\n\n${result.text}`);
@@ -797,26 +809,42 @@ export function registerResources(server: McpServer) {
       mimeType: "text/markdown",
     },
     async (uri, variables) => {
-      const notebookId = decodeURIComponent(String(variables.notebookId));
-      const notes = getUserNotes({ notebookExternalId: notebookId, limit: 500 });
-      const notebook = listNotebooks().find((nb) => nb.externalId === notebookId);
-      const title = notebook?.title ?? notebookId;
+      // Same error boundary the tools get: a read on a machine without Logos
+      // data (or with a stale cached URI) must produce readable guidance, not
+      // a raw JSON-RPC internal error leaking a filesystem path.
+      try {
+        const notebookId = decodeURIComponent(String(variables.notebookId));
+        const notes = getUserNotes({ notebookExternalId: notebookId, limit: 500 });
+        const notebook = listNotebooks().find((nb) => nb.externalId === notebookId);
+        const title = notebook?.title ?? notebookId;
 
-      const body = notes.length === 0
-        ? "_No notes in this notebook._"
-        : notes.map((n) => {
-            const refs = n.references.length > 0 ? ` — ${n.references.join("; ")}` : "";
-            const date = n.modifiedDate ?? n.createdDate;
-            return `## Note${refs} (${date})\n\n${n.content}`;
-          }).join("\n\n");
+        const body = notes.length === 0
+          ? "_No notes in this notebook._"
+          : notes.map((n) => {
+              const refs = n.references.length > 0 ? ` — ${n.references.join("; ")}` : "";
+              const date = n.modifiedDate ?? n.createdDate;
+              return `## Note${refs} (${date})\n\n${n.content}`;
+            }).join("\n\n");
 
-      return {
-        contents: [{
-          uri: uri.href,
-          mimeType: "text/markdown",
-          text: `# ${title}\n\n${body}`,
-        }],
-      };
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "text/markdown",
+            text: `# ${title}\n\n${body}`,
+          }],
+        };
+      } catch (error) {
+        logToolFailure("resource:notebooks", error);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "text/markdown",
+            text: `# Notebook unavailable\n\nCould not read this notebook: ${formatToolFailure(error)}\n\n` +
+              "Verify that Logos Bible Software is installed on this machine and that " +
+              "LOGOS_DATA_DIR points at its data directory if it lives in a non-default location.",
+          }],
+        };
+      }
     }
   );
 }
