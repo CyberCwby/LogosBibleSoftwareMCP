@@ -166,6 +166,145 @@ describe("biblia-api", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/content/KJV.txt");
   });
 
+  it("passes mode and limit through to the search endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: { resultCount: 0, results: [] },
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+    await bibliaApi.searchBible("hesed", { bible: "kjv", mode: "fuzzy", limit: 7 });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname.endsWith("/search/KJV")).toBe(true);
+    expect(url.searchParams.get("query")).toBe("hesed");
+    expect(url.searchParams.get("mode")).toBe("fuzzy");
+    expect(url.searchParams.get("limit")).toBe("7");
+  });
+
+  it("defaults searchBible to verse mode and limit 20", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: { resultCount: 0, results: [] },
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+    await bibliaApi.searchBible("love");
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname.endsWith("/search/LEB")).toBe(true);
+    expect(url.searchParams.get("mode")).toBe("verse");
+    expect(url.searchParams.get("limit")).toBe("20");
+  });
+
+  it("defaults malformed search payloads instead of crashing", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: { results: [{ title: "John 3:16" }, {}] },
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.searchBible("love")).resolves.toEqual({
+      query: "love",
+      resultCount: 0,
+      results: [
+        { title: "John 3:16", preview: "" },
+        { title: "", preview: "" },
+      ],
+    });
+  });
+
+  it("scans text for references and defaults a missing results array", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: true,
+          status: 200,
+          body: { results: [{ passage: "John 3:16", textIndex: 4, textLength: 9 }] },
+        })
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ ok: true, status: 200, body: {} })
+      );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.scanReferences("see John 3:16")).resolves.toEqual([
+      { passage: "John 3:16" },
+    ]);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname.endsWith("/scan")).toBe(true);
+    expect(url.searchParams.get("text")).toBe("see John 3:16");
+    expect(url.searchParams.get("tagChapters")).toBe("true");
+
+    await expect(bibliaApi.scanReferences("nothing here", false)).resolves.toEqual([]);
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(secondUrl.searchParams.get("tagChapters")).toBe("false");
+  });
+
+  it("compares passages and defaults missing relation flags to false", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        ok: true,
+        status: 200,
+        body: { intersects: true, subset: true },
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.comparePassages("Romans 8:28-30", "Romans 8:29")).resolves.toEqual({
+      equal: false,
+      intersects: true,
+      subset: true,
+      superset: false,
+      before: false,
+      after: false,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname.endsWith("/compare")).toBe(true);
+    expect(url.searchParams.get("first")).toBe("Romans 8:28-30");
+    expect(url.searchParams.get("second")).toBe("Romans 8:29");
+  });
+
+  it("lists available Bibles, forwarding the query only when given", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: true,
+          status: 200,
+          body: { bibles: [{ bible: "LEB", title: "Lexham English Bible" }] },
+        })
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ ok: true, status: 200, body: {} })
+      );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    await expect(bibliaApi.getAvailableBibles()).resolves.toEqual([
+      { bible: "LEB", title: "Lexham English Bible" },
+    ]);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname.endsWith("/find")).toBe(true);
+    expect(url.searchParams.has("query")).toBe(false);
+
+    // Missing bibles array defaults to [] rather than throwing.
+    await expect(bibliaApi.getAvailableBibles("greek")).resolves.toEqual([]);
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(secondUrl.searchParams.get("query")).toBe("greek");
+  });
+
   it("surfaces network failures with an actionable message", async () => {
     fetchMock.mockRejectedValue(new Error("socket hang up"));
 
