@@ -276,17 +276,25 @@ export async function readResourceText(
   // non-ASCII characters in the script are interpreted as ANSI.
   await writeFile(scriptPath, "\ufeff" + AUTOMATION_SCRIPT, "utf-8");
 
+  const psArgs = [
+    "-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", scriptPath,
+    "-MaxPages", String(pages),
+  ];
+  // Attach the tab name with the `-Name:value` form (one argv token) so a
+  // value beginning with "-" (e.g. "-MaxPages") cannot be misread as a
+  // parameter name by PowerShell's binder. When no tab name is given the
+  // parameter is omitted and the script's default ("") applies.
+  if (tabName !== undefined && tabName !== "") {
+    psArgs.push(`-TabName:${tabName}`);
+  }
+
   let rawOutput = "";
   try {
     try {
       const { stdout } = await execFileAsync(
         "powershell",
-        [
-          "-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-          "-File", scriptPath,
-          "-TabName", tabName ?? "",
-          "-MaxPages", String(pages),
-        ],
+        psArgs,
         {
           // Base + per-page budget: each page costs foreground/scroll delays.
           timeout: 30_000 + pages * 2_500,
