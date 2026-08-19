@@ -375,6 +375,52 @@ describe("index MCP registration", () => {
     });
   });
 
+  it("logs only argument keys, never values, on tool failure", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const bibliaApi = await import("../src/services/biblia-api.js");
+      vi.mocked(bibliaApi.scanReferences).mockRejectedValueOnce(new Error("boom"));
+      const indexModule = await import("../src/index.js");
+
+      indexModule.createServer();
+      const tool = getRegisteredTool("scan_references");
+      const secret = "private manuscript contents that must never reach the log";
+      await tool.handler({ text: secret });
+
+      const logged = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain('"tool":"scan_references"');
+      expect(logged).toContain('"argKeys":["text"]');
+      expect(logged).not.toContain(secret);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("returns readable guidance when a notebook resource read fails (error boundary)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const sqliteReader = await import("../src/services/sqlite-reader.js");
+      vi.mocked(sqliteReader.getUserNotes).mockImplementationOnce(() => {
+        throw new Error("Database not found: /missing/notestool.db");
+      });
+      const indexModule = await import("../src/index.js");
+
+      indexModule.createServer();
+      const resource = mcpState.instances.at(-1)?.resources[0];
+      const result = (await resource?.readCallback(
+        new URL("logos://notebooks/nb-1"),
+        { notebookId: "nb-1" }
+      )) as { contents: Array<{ text: string; mimeType: string }> };
+
+      expect(result.contents[0].mimeType).toBe("text/markdown");
+      expect(result.contents[0].text).toContain("# Notebook unavailable");
+      expect(result.contents[0].text).toContain("Database not found: /missing/notestool.db");
+      expect(result.contents[0].text).toContain("LOGOS_DATA_DIR");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it("formats resource type summaries", async () => {
     const indexModule = await import("../src/index.js");
 
