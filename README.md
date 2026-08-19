@@ -233,11 +233,16 @@ See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) fo
 
 </details>
 
-### 5. Create `.env` in the project root (optional, for development)
+### 5. Create `.env` in `logos-mcp-server/` (optional, for development)
 
 ```
 BIBLIA_API_KEY=your_api_key_here
 ```
+
+Only `npm run dev` (run from `logos-mcp-server/`) loads this file, via Node's
+`--env-file-if-exists` flag (requires Node 22.9+). MCP clients do **not** read
+it — they pass environment variables through the `env` block of their config,
+as shown in the client setup sections above.
 
 ### 6. Rebuild after source changes
 
@@ -366,9 +371,9 @@ LogosBibleSoftwareMCP/
 ├── .mcp.json                          # Claude Code MCP config (you create this)
 ├── .vscode/
 │   └── mcp.json                       # VS Code + Copilot MCP config (you create this)
-├── .env                               # API key (you create this)
 ├── LICENSE
 ├── logos-mcp-server/
+│   ├── .env                           # API key for `npm run dev` (you create this)
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
