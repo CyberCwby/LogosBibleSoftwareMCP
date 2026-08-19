@@ -1,14 +1,16 @@
 # Thompson Chain Study Mode Implementation Plan
 
-> **STATUS (2026-08-19): ON HOLD — target file does not exist.** Every task
-> below edits `.claude/agents/rob-agent.md`, but that file has never existed
-> in this repository: git history (`git log --all -- .claude/agents/`) shows
-> only `socratic-bible-study.md` (added in the initial commit f2261e6) and
-> `tool-tester.md` (3630ba0), with no rename or supersession trail from
-> rob-agent.md. Whether this plan should be retargeted at
-> `socratic-bible-study.md` (adapting the line-number anchors to that file's
-> structure) is the owner's call; the plan has deliberately not been applied
-> to a file it does not name.
+> **STATUS (2026-08-19): IMPLEMENTED — retargeted by owner decision.** The
+> plan's target `.claude/agents/rob-agent.md` never existed in this repository
+> (git history shows only `socratic-bible-study.md`, added in the initial
+> commit f2261e6, with no rename trail). The owner decided to apply the plan
+> to `.claude/agents/socratic-bible-study.md`; all tasks below were
+> implemented against that file on branch
+> `claude/remaining-coding-pieces-bu0ufm`, with the plan's line-number anchors
+> adapted to that file's actual section structure (same five insertion points:
+> Study Session Types, Correlation layer, Tool Usage Strategy, Session Flow,
+> and a new Chain Study Journal section before Guardrails). Read
+> `rob-agent.md` throughout this document as `socratic-bible-study.md`.
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -253,13 +255,13 @@ git commit -m "chore: create chain-studies directory for Thompson Chain study jo
 **Step 1: Read the complete rob-agent.md**
 
 Read `.claude/agents/rob-agent.md` from top to bottom. Verify:
-- [ ] Section numbering flows correctly (Study Session Types now has 5 entries)
-- [ ] Correlation layer includes chain-specific questions
-- [ ] Tool Usage has "Chain Study Tool Sequence" subsection
-- [ ] Session Flow has "Chain Study Session Flow" subsection
-- [ ] Chain Study Journal section exists between Session Flow area and Guardrails
-- [ ] No broken markdown (unclosed sections, stray formatting)
-- [ ] All `---` separators are in the right places
+- [x] Section numbering flows correctly (Study Session Types now has 5 entries) *(verified 2026-08-19 against socratic-bible-study.md)*
+- [x] Correlation layer includes chain-specific questions *(verified 2026-08-19)*
+- [x] Tool Usage has "Chain Study Tool Sequence" subsection *(verified 2026-08-19)*
+- [x] Session Flow has "Chain Study Session Flow" subsection *(verified 2026-08-19)*
+- [x] Chain Study Journal section exists between Session Flow area and Guardrails *(verified 2026-08-19)*
+- [x] No broken markdown (unclosed sections, stray formatting) *(verified 2026-08-19: heading outline clean, code fences balanced, frontmatter intact)*
+- [x] All `---` separators are in the right places *(verified 2026-08-19)*
 
 **Step 2: Commit any fixes**
 
