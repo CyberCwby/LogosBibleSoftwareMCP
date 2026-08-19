@@ -1,5 +1,15 @@
 # Thompson Chain Study Mode Implementation Plan
 
+> **STATUS (2026-08-19): ON HOLD — target file does not exist.** Every task
+> below edits `.claude/agents/rob-agent.md`, but that file has never existed
+> in this repository: git history (`git log --all -- .claude/agents/`) shows
+> only `socratic-bible-study.md` (added in the initial commit f2261e6) and
+> `tool-tester.md` (3630ba0), with no rename or supersession trail from
+> rob-agent.md. Whether this plan should be retargeted at
+> `socratic-bible-study.md` (adapting the line-number anchors to that file's
+> structure) is the owner's call; the plan has deliberately not been applied
+> to a file it does not name.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add Thompson Chain Reference study mode to rob-agent so the student navigates chains in their physical Bible while the agent enriches each link with lexicons, grammars, balanced commentaries, and Socratic dialogue.
