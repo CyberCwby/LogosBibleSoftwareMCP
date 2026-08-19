@@ -248,6 +248,34 @@ describe("index MCP registration", () => {
     });
   });
 
+  it("labels expanded verse-level passages as context", async () => {
+    const indexModule = await import("../src/index.js");
+    const referenceParser = await import("../src/services/reference-parser.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_passage_context");
+    const result = (await tool.handler({ passage: "John 3:16" })) as { content: Array<{ text: string }> };
+
+    expect(vi.mocked(referenceParser.expandRange)).toHaveBeenCalledWith("John 3:16", 5);
+    expect(getBibleTextMock).toHaveBeenCalledWith("John 3:11-21", undefined);
+    expect(result.content[0].text).toContain("context around John 3:16");
+  });
+
+  it("says chapter-only passages are returned as-is instead of claiming added context", async () => {
+    const indexModule = await import("../src/index.js");
+    const referenceParser = await import("../src/services/reference-parser.js");
+    vi.mocked(referenceParser.expandRange).mockClear();
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_passage_context");
+    const result = (await tool.handler({ passage: "Romans 8", context_verses: 5 })) as { content: Array<{ text: string }> };
+
+    expect(vi.mocked(referenceParser.expandRange)).not.toHaveBeenCalled();
+    expect(getBibleTextMock).toHaveBeenCalledWith("Romans 8", undefined);
+    expect(result.content[0].text).toContain("Romans 8 is a whole chapter; returned as-is (no verse context added)");
+    expect(result.content[0].text).not.toContain("context around");
+  });
+
   it("says when an action landed in the Logos web app and relays the caveat", async () => {
     const logosApp = await import("../src/services/logos-app.js");
     vi.mocked(logosApp.openFactbook).mockResolvedValueOnce({

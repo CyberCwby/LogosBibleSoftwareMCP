@@ -174,6 +174,15 @@ export function registerTools(server: McpServer) {
     },
     annotations: CALLS_BIBLIA_API,
   }, async ({ passage, context_verses, bible }: { passage: string; context_verses?: number; bible?: string }) => {
+    // expandRange only widens verse-level references; say so for chapter-only
+    // input rather than labeling the unchanged chapter "context around ...".
+    const parsed = parseReference(passage);
+    if (parsed.verse === undefined) {
+      const result = await getBibleText(passage, bible);
+      return text(
+        `**${result.passage}** (${result.bible}) — ${passage} is a whole chapter; returned as-is (no verse context added)\n\n${result.text}`
+      );
+    }
     const expanded = expandRange(passage, context_verses ?? 5);
     const result = await getBibleText(expanded, bible);
     return text(`**${result.passage}** (${result.bible}) — context around ${passage}\n\n${result.text}`);
