@@ -468,6 +468,64 @@ describe("sqlite reader integration", () => {
     ]);
   });
 
+  it("treats LIKE metacharacters in catalog filters literally", async () => {
+    createDb(
+      dbPaths.catalog,
+      [],
+      [
+        {
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:PCT", "100% Grace", "100%", "text.monograph", "J_ Smith", "Grace", "<p>Literal percent</p>", "2010", 1, 0, 5],
+        },
+        {
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:X", "100X Grace", "100X", "text.monograph", "JQ Smith", "Grace", "<p>Wildcard bait</p>", "2011", 1, 0, 5],
+        },
+      ]
+    );
+
+    const catalogReader = await import("../src/services/catalog-reader.js");
+
+    // "%" must match only the literal percent sign, not act as a wildcard.
+    const percent = catalogReader.searchCatalog({ query: "100%" });
+    expect(percent.map((r) => r.resourceId)).toEqual(["LLS:PCT"]);
+
+    // "_" must not match any-single-character ("J_" vs "JQ").
+    const underscore = catalogReader.searchCatalog({ author: "J_" });
+    expect(underscore.map((r) => r.resourceId)).toEqual(["LLS:PCT"]);
+  });
+
+  it("treats LIKE metacharacters in the notebook title filter literally", async () => {
+    createDb(
+      dbPaths.notes,
+      [],
+      [
+        {
+          sql: "INSERT INTO Notebooks VALUES (?, ?, ?)",
+          params: ["nb-us", "A_B Notes", 0],
+        },
+        {
+          sql: "INSERT INTO Notebooks VALUES (?, ?, ?)",
+          params: ["nb-x", "AXB Notes", 0],
+        },
+        {
+          sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [3, "note-us", '<Paragraph><Run Text="Literal underscore"/></Paragraph>', "2026-03-03", null, "nb-us", null, "[]", 0, 0],
+        },
+        {
+          sql: "INSERT INTO Notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: [4, "note-x", '<Paragraph><Run Text="Wildcard bait"/></Paragraph>', "2026-03-04", null, "nb-x", null, "[]", 0, 0],
+        },
+      ]
+    );
+
+    const sqliteReader = await import("../src/services/sqlite-reader.js");
+    const notes = sqliteReader.getUserNotes({ notebookTitle: "A_B" });
+
+    expect(notes).toHaveLength(1);
+    expect(notes[0].externalId).toBe("note-us");
+  });
+
   it("prefers exact and title-focused query matches over pure title sorting", async () => {
     createDb(
       dbPaths.catalog,

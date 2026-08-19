@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { getDbPaths } from "../config.js";
 import { anchorsMatchReference, describeBibleAnchors } from "../utils/bible-anchors.js";
 import { stripRichText } from "../utils/strip-markup.js";
+import { escapeLikePattern } from "../utils/sql.js";
 import type {
   HighlightResult,
   FavoriteResult,
@@ -277,8 +278,8 @@ export function getUserNotes(options: {
     const params: unknown[] = [];
 
     if (options.notebookTitle) {
-      sql += " AND nb.Title LIKE ?";
-      params.push(`%${options.notebookTitle}%`);
+      sql += " AND nb.Title LIKE ? ESCAPE '\\'";
+      params.push(`%${escapeLikePattern(options.notebookTitle)}%`);
     }
     if (options.notebookExternalId) {
       sql += " AND n.NotebookExternalId = ?";
