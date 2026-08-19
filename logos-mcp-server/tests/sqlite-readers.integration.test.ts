@@ -235,17 +235,19 @@ describe("sqlite reader integration", () => {
           PublicationDate TEXT,
           Availability INTEGER,
           IsDataset INTEGER,
-          UseCount INTEGER
+          UseCount INTEGER,
+          MilestoneIndexes TEXT,
+          ReferenceSupersets TEXT
         );`,
       ],
       [
         {
-          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          params: ["LLS:COMM1", "Romans Commentary", "Rom Comm", "text.monograph.commentary.bible", "John Murray", "Romans", "<p>Classic commentary</p>", "1959", 1, 0, 10],
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:COMM1", "Romans Commentary", "Rom Comm", "text.monograph.commentary.bible", "John Murray", "Romans", "<p>Classic commentary</p>", "1959", 1, 0, 10, "Reference;bible;1000\tReference;page;900\tHeadword;en;800", "bible+leb.45"],
         },
         {
-          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          params: ["LLS:COMM2", "Genesis Commentary", "Gen Comm", "text.monograph.commentary", "John Calvin", "Genesis", "<p>Reformation notes</p>", "1554", 1, 0, 7],
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:COMM2", "Genesis Commentary", "Gen Comm", "text.monograph.commentary", "John Calvin", "Genesis", "<p>Reformation notes</p>", "1554", 1, 0, 7, null, null],
         },
       ]
     );
@@ -468,17 +470,87 @@ describe("sqlite reader integration", () => {
     ]);
   });
 
+  it("returns parsed milestone indexes for a catalog resource", async () => {
+    const catalogReader = await import("../src/services/catalog-reader.js");
+
+    expect(catalogReader.getResourceReferenceInfo("LLS:COMM1")).toEqual({
+      resourceId: "LLS:COMM1",
+      title: "Romans Commentary",
+      type: "text.monograph.commentary.bible",
+      milestones: [
+        { category: "Reference", type: "bible", priority: 1000 },
+        { category: "Reference", type: "page", priority: 900 },
+        { category: "Headword", type: "en", priority: 800 },
+      ],
+      referenceSupersets: "bible+leb.45",
+    });
+  });
+
+  it("returns empty milestones when a resource has no milestone indexes", async () => {
+    const catalogReader = await import("../src/services/catalog-reader.js");
+
+    expect(catalogReader.getResourceReferenceInfo("LLS:COMM2")).toEqual({
+      resourceId: "LLS:COMM2",
+      title: "Genesis Commentary",
+      type: "text.monograph.commentary",
+      milestones: [],
+      referenceSupersets: null,
+    });
+  });
+
+  it("returns null for unknown or unavailable resources", async () => {
+    createDb(
+      dbPaths.catalog,
+      [],
+      [
+        {
+          sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:GONE", "Unavailable Resource", "UR", "text.monograph", "Nobody", null, null, "2000", 0, 0, 0],
+        },
+      ]
+    );
+
+    const catalogReader = await import("../src/services/catalog-reader.js");
+
+    expect(catalogReader.getResourceReferenceInfo("LLS:NOPE")).toBeNull();
+    expect(catalogReader.getResourceReferenceInfo("LLS:GONE")).toBeNull();
+  });
+
+  it("tolerates malformed milestone index entries", async () => {
+    createDb(
+      dbPaths.catalog,
+      [],
+      [
+        {
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:ODD", "Odd Milestones", "OM", "text.monograph", "Author", null, null, "2000", 1, 0, 0, "Reference\t\tHeadword;he\tReference;vnp;abc", null],
+        },
+      ]
+    );
+
+    const catalogReader = await import("../src/services/catalog-reader.js");
+    const info = catalogReader.getResourceReferenceInfo("LLS:ODD");
+
+    expect(info?.milestones).toEqual([
+      // Missing fields default: type to "", priority to 0; a non-numeric
+      // priority parses to NaN (current behavior, pinned here).
+      { category: "Reference", type: "", priority: 0 },
+      { category: "Headword", type: "he", priority: 0 },
+      { category: "Reference", type: "vnp", priority: NaN },
+    ]);
+  });
+
   it("treats LIKE metacharacters in catalog filters literally", async () => {
     createDb(
       dbPaths.catalog,
       [],
       [
         {
-          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           params: ["LLS:PCT", "100% Grace", "100%", "text.monograph", "J_ Smith", "Grace", "<p>Literal percent</p>", "2010", 1, 0, 5],
         },
         {
-          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           params: ["LLS:X", "100X Grace", "100X", "text.monograph", "JQ Smith", "Grace", "<p>Wildcard bait</p>", "2011", 1, 0, 5],
         },
       ]
@@ -532,7 +604,7 @@ describe("sqlite reader integration", () => {
       [],
       [
         {
-          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           params: ["LLS:LEX1", "Romans", "Romans", "text.monograph.dictionary", "Jane Doe", "Romans, Pauline theology", "<p>Dictionary article</p>", "2001", 1, 0, 1],
         },
       ]
@@ -554,7 +626,7 @@ describe("sqlite reader integration", () => {
     const inserts = [];
     for (let i = 1; i <= 40; i += 1) {
       inserts.push({
-        sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params: [
           `LLS:BULK${i}`,
           `Studies Touching on Romans, Volume ${i}`,
@@ -571,7 +643,7 @@ describe("sqlite reader integration", () => {
       });
     }
     inserts.push({
-      sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      sql: "INSERT INTO Records (ResourceId, Title, AbbreviatedTitle, Type, Authors, Subjects, Description, PublicationDate, Availability, IsDataset, UseCount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       params: ["LLS:EXACT", "Romans", "Rom", "text.monograph.commentary.bible", "Quiet Author", "Romans", "<p>Never opened</p>", "2020", 1, 0, 0],
     });
     createDb(dbPaths.catalog, [], inserts);

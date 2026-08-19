@@ -160,10 +160,23 @@ vi.mock("../src/services/cross-references.js", () => ({
   findCrossReferences: findCrossReferencesMock,
 }));
 
+const getResourceReferenceInfoMock = vi.hoisted(() => vi.fn(() => ({
+  resourceId: "LLS:COMM",
+  title: "Romans Commentary",
+  type: "text.monograph.commentary.bible",
+  milestones: [
+    { category: "Reference" as const, type: "bible", priority: 1000 },
+    { category: "Reference" as const, type: "page", priority: 900 },
+    { category: "Headword" as const, type: "en", priority: 800 },
+  ],
+  referenceSupersets: "bible+leb.45",
+})));
+
 vi.mock("../src/services/catalog-reader.js", () => ({
   searchCatalog: searchCatalogMock,
   getResourceTypeSummary: vi.fn(() => [{ label: "Commentary", count: 12 }]),
   typeLabel: vi.fn(() => "Commentary"),
+  getResourceReferenceInfo: getResourceReferenceInfoMock,
 }));
 
 function getRegisteredTool(name: string) {
@@ -447,6 +460,58 @@ describe("index MCP registration", () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it("formats get_resource_references with reference types, headwords, coverage, and usage", async () => {
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:COMM" })) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(getResourceReferenceInfoMock).toHaveBeenCalledWith("LLS:COMM");
+    expect(result.isError).toBeUndefined();
+    const body = result.content[0].text;
+    expect(body).toContain("**Romans Commentary** (`LLS:COMM`)");
+    expect(body).toContain("## Reference Types");
+    expect(body).toContain("- **bible** (priority: 1000) — Bible verse references (e.g., bible.24.1.1 for Jeremiah 1:1)");
+    expect(body).toContain("- **page** (priority: 900) — Page numbers (e.g., page.271)");
+    expect(body).toContain("## Headword Indexes");
+    expect(body).toContain("- **en** (priority: 800)");
+    expect(body).toContain("## Coverage\n`bible+leb.45`");
+    expect(body).toContain("## Usage");
+  });
+
+  it("says when a resource has no indexed reference types", async () => {
+    getResourceReferenceInfoMock.mockReturnValueOnce({
+      resourceId: "LLS:PLAIN",
+      title: "Plain Book",
+      type: "text.monograph",
+      milestones: [],
+      referenceSupersets: null as never,
+    });
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:PLAIN" })) as { content: Array<{ text: string }> };
+
+    const body = result.content[0].text;
+    expect(body).toContain("This resource has no indexed reference types.");
+    expect(body).not.toContain("## Reference Types");
+    expect(body).not.toContain("## Coverage");
+  });
+
+  it("reports unknown resources from get_resource_references as tool errors", async () => {
+    getResourceReferenceInfoMock.mockReturnValueOnce(null as never);
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_resource_references");
+    const result = (await tool.handler({ resource_id: "LLS:NOPE" })) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Resource not found: LLS:NOPE");
   });
 
   it("formats resource type summaries", async () => {
