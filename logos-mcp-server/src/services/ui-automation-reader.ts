@@ -239,9 +239,17 @@ export function parseAutomationOutput(rawOutput: string): AutomationOutput {
     try {
       const parsed = JSON.parse(line) as AutomationOutput;
       // ConvertTo-Json collapses a single-element array property in some
-      // PowerShell versions; normalize pages back to an array.
+      // PowerShell versions; normalize array properties back to arrays.
+      // `availableTabs` was missed: with exactly ONE open tab and a
+      // non-matching tab_name it arrived as a string, so `.length > 0` was
+      // true (string length) and `.join(", ")` then threw a TypeError —
+      // replacing the intended "Open tabs: ESV" message with a crash, in the
+      // one branch that exists to be helpful.
       if (parsed.pages !== undefined && !Array.isArray(parsed.pages)) {
         parsed.pages = [parsed.pages as unknown as string];
+      }
+      if (parsed.availableTabs !== undefined && !Array.isArray(parsed.availableTabs)) {
+        parsed.availableTabs = [parsed.availableTabs as unknown as string];
       }
       return parsed;
     } catch {
@@ -258,6 +266,26 @@ export function parseAutomationOutput(rawOutput: string): AutomationOutput {
  * @param tabName  - Optional partial tab name to match (e.g., "Guide for the Perplexed")
  * @param maxPages - Number of pages to read (1 = visible only, >1 = scroll)
  */
+/**
+ * Serializes `readResourceText`. The underlying resource is the single
+ * foreground Logos window, which is inherently exclusive: two overlapping
+ * calls each ran `SetForegroundWindow` + `SendKeys "{PGDN}"` against it, so
+ * each captured pages the other had scrolled past and `mergePages` produced
+ * garbled, gap-ridden text for BOTH — reported with `success: true`. An agent
+ * fanning out over two tabs is a natural pattern (the tool takes a `tab_name`),
+ * and multi-page reads, which take longest, have the widest overlap window.
+ *
+ * The chain never rejects: each link is attached with a `.then`/`.catch` pair
+ * so one caller's failure cannot poison the queue for the next.
+ */
+let uiaQueue: Promise<unknown> = Promise.resolve();
+
+function serializeUia<T>(run: () => Promise<T>): Promise<T> {
+  const result = uiaQueue.then(run, run);
+  uiaQueue = result.catch(() => undefined);
+  return result;
+}
+
 export async function readResourceText(
   tabName?: string,
   maxPages?: number,
@@ -265,6 +293,13 @@ export async function readResourceText(
   if (platform() !== "win32") {
     throw new Error("Resource text extraction requires Windows");
   }
+  return serializeUia(() => readResourceTextExclusive(tabName, maxPages));
+}
+
+async function readResourceTextExclusive(
+  tabName?: string,
+  maxPages?: number,
+): Promise<ResourceTextResult> {
 
   const pages = Math.max(1, Math.min(maxPages ?? 1, 50));
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { gunzipSync } from "zlib";
+import { referencesIntersect } from "../utils/bible-anchors.js";
 import { bookNameFromNumber, bookNumberFromName, formatReference, parseReference } from "./reference-parser.js";
 
 // Curated verse-to-verse cross-reference dataset (openbible.info, CC-BY).
@@ -143,9 +144,24 @@ export function findCrossReferences(
     }
   }
 
-  // Exclude targets that are the source itself
-  const sourceKey = formatReference(ref);
-  best.delete(sourceKey);
+  // Exclude every target that OVERLAPS the source, not just the one whose
+  // formatted string matches it exactly. For get_cross_references("Romans
+  // 8:28-30") the per-verse dataset entries (45.8.28 -> 45.8.29 and the like)
+  // survived a `best.delete("Romans 8:28-30")`, so the passage's own interior
+  // verses were listed among its "cross-references".
+  for (const target of [...best.keys()]) {
+    let parsed;
+    try {
+      parsed = parseReference(target);
+    } catch {
+      // A target this parser cannot read is not one we can compare; keeping it
+      // is the conservative choice (it was never excluded before either).
+      continue;
+    }
+    if (referencesIntersect(parsed, ref)) {
+      best.delete(target);
+    }
+  }
 
   return Array.from(best.entries())
     .map(([target, votes]) => ({ reference: target, votes }))

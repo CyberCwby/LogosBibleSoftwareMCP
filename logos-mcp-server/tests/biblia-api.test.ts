@@ -77,7 +77,9 @@ describe("biblia-api", () => {
 
     await expect(bibliaApi.getBibleText("John 3:99")).rejects.toMatchObject({
       name: "BibliaApiError",
-      code: "unexpected_response",
+      // Its own code, so get_passage_context can tell "your reference is bad"
+      // from "the window I widened ran off the end of the chapter" (L6).
+      code: "passage_not_found",
       message: expect.stringContaining("John 3:99"),
     });
   });
@@ -303,6 +305,60 @@ describe("biblia-api", () => {
     await expect(bibliaApi.getAvailableBibles("greek")).resolves.toEqual([]);
     const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
     expect(secondUrl.searchParams.get("query")).toBe("greek");
+  });
+
+  it("refuses to sleep out an oversized Retry-After (M3)", async () => {
+    // Biblia, or any CDN/proxy answering 429, can send `Retry-After: 86400`.
+    // The loop used to sleep for exactly that — twice — and MCP stdio has no
+    // per-tool timeout, so the client just appeared hung and the user never
+    // saw the rate-limit message. Past the cap, throw NOW and let the caller
+    // decide: the error already carries retryAfterSeconds.
+    fetchMock.mockResolvedValue(
+      mockResponse({
+        ok: false,
+        status: 429,
+        body: "Too many requests",
+        contentType: "text/plain",
+        headers: { "retry-after": "86400" },
+      })
+    );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+
+    const started = Date.now();
+    await expect(bibliaApi.searchBible("love")).rejects.toMatchObject({
+      name: "BibliaApiError",
+      code: "rate_limited",
+      retryAfterSeconds: 86400,
+    });
+    // No retry was attempted, so exactly one request went out and no time
+    // was spent asleep.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("still honours a Retry-After inside the cap", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: false,
+          status: 429,
+          body: "Too many requests",
+          contentType: "text/plain",
+          headers: { "retry-after": "0" },
+        })
+      )
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: true,
+          status: 200,
+          body: { resultCount: 0, results: [] },
+        })
+      );
+
+    const bibliaApi = await import("../src/services/biblia-api.js");
+    await expect(bibliaApi.searchBible("love")).resolves.toMatchObject({ resultCount: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("surfaces network failures with an actionable message", async () => {

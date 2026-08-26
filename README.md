@@ -64,6 +64,15 @@ Choose your client below. Each needs the path to the built server and your Bibli
 
 > **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosBibleSoftwareMCP` with your actual project path.
 
+> **Your API key goes in a file git ignores.** Every in-project config below
+> (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`) is matched by the
+> `**/mcp.json` rule in `.gitignore`, so `git add -A` cannot publish your key.
+> Only `.mcp.json` used to be ignored, which made the VS Code and Cursor
+> instructions a way to commit a personal key to a fork. If you would rather
+> not have the key on disk at all, VS Code supports `"${input:biblia-key}"` in
+> place of the literal value, and every client can read it from the
+> environment instead.
+
 <details>
 <summary><strong>Claude Code</strong></summary>
 
@@ -368,9 +377,9 @@ LogosBibleSoftwareMCP/
 ├── .claude/
 │   └── agents/
 │       └── socratic-bible-study.md    # Socratic agent definition (Claude Code)
-├── .mcp.json                          # Claude Code MCP config (you create this)
+├── .mcp.json                          # Claude Code MCP config (you create this; gitignored)
 ├── .vscode/
-│   └── mcp.json                       # VS Code + Copilot MCP config (you create this)
+│   └── mcp.json                       # VS Code + Copilot MCP config (you create this; gitignored)
 ├── LICENSE
 ├── logos-mcp-server/
 │   ├── .env                           # API key for `npm run dev` (you create this)

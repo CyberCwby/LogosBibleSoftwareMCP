@@ -74,6 +74,51 @@ describe("findCrossReferences", () => {
   });
 });
 
+describe("self-overlap exclusion (L2, 2026-08-25 review)", () => {
+  // Only the exact formatted source was deleted from the result set, so
+  // per-verse entries pointing INSIDE the requested range survived and the
+  // passage's own interior verses were listed among its "cross-references".
+  const SELF_LINES = [
+    "45.8.28\t45.8.29\t99",     // Rom 8:28 -> Rom 8:29   (inside 8:28-30)
+    "45.8.28\t45.8.30\t98",     // Rom 8:28 -> Rom 8:30   (inside)
+    "45.8.29\t45.8.28-8.30\t97", // Rom 8:29 -> the range itself (inside)
+    "45.8.28\t45.8.31\t50",     // Rom 8:28 -> Rom 8:31   (outside — must stay)
+    "45.8.30\t50.1.6\t40",      // Rom 8:30 -> Phil 1:6   (outside — must stay)
+  ];
+  let selfDir: string;
+  let selfPath: string;
+
+  beforeAll(() => {
+    selfDir = mkdtempSync(join(tmpdir(), "xrefs-self-"));
+    selfPath = join(selfDir, "cross-references.tsv.gz");
+    writeFileSync(selfPath, gzipSync(SELF_LINES.join("\n")));
+  });
+
+  afterAll(() => {
+    rmSync(selfDir, { recursive: true, force: true });
+  });
+
+  it("drops targets that overlap the requested range", () => {
+    expect(findCrossReferences("Romans 8:28-30", { dataPath: selfPath })).toEqual([
+      { reference: "Romans 8:31", votes: 50 },
+      { reference: "Philippians 1:6", votes: 40 },
+    ]);
+  });
+
+  it("drops a target that IS the requested range", () => {
+    const results = findCrossReferences("Romans 8:29", { dataPath: selfPath });
+    expect(results.map((r) => r.reference)).not.toContain("Romans 8:28-30");
+  });
+
+  it("keeps a neighbouring verse when it is outside the request", () => {
+    expect(findCrossReferences("Romans 8:28", { dataPath: selfPath })).toEqual([
+      { reference: "Romans 8:29", votes: 99 },
+      { reference: "Romans 8:30", votes: 98 },
+      { reference: "Romans 8:31", votes: 50 },
+    ]);
+  });
+});
+
 describe("isCrossReferenceDataAvailable", () => {
   it("reflects dataset presence", () => {
     expect(isCrossReferenceDataAvailable(dataPath)).toBe(true);

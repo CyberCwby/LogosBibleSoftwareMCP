@@ -10,12 +10,6 @@ export interface ParsedReference {
   endVerse?: number;
 }
 
-export interface ReferenceFormats {
-  logos: string;     // e.g., "Ge1.1"
-  biblia: string;    // e.g., "Genesis1.1"
-  human: string;     // e.g., "Genesis 1:1"
-}
-
 // ─── Biblia API Types ────────────────────────────────────────────────────────
 
 export interface BibleTextResult {
@@ -33,11 +27,6 @@ export interface BibleSearchResult {
 export interface BibleSearchHit {
   title: string;
   preview: string;
-}
-
-export interface BibliaParseResult {
-  passage: string;
-  passages: string[];
 }
 
 // ─── Logos App Types ─────────────────────────────────────────────────────────
@@ -77,14 +66,6 @@ export interface FavoriteResult {
   appCommand: string;
   resourceId: string | null;
   rank: number;
-}
-
-export interface FavoriteFolder {
-  id: string;
-  title: string;
-  rank: number;
-  parentId: string | null;
-  children: (FavoriteResult | FavoriteFolder)[];
 }
 
 export interface WorkflowTemplate {

@@ -185,8 +185,8 @@ export function searchCatalog(options: {
     }>;
 
     return rows
-      .map((r) => ({
-        resource: {
+      .map((r) => {
+        const resource = {
           resourceId: r.ResourceId,
           title: r.Title,
           abbreviatedTitle: r.AbbreviatedTitle,
@@ -195,11 +195,15 @@ export function searchCatalog(options: {
           subjects: r.Subjects,
           description: stripXml(r.Description),
           publicationDate: r.PublicationDate,
-        },
-        useCount: r.UseCount,
-      }))
+        };
+        // Scored ONCE per row, like useCount beside it. It was computed inside
+        // the comparator — twice per comparison, O(n log n) times over a scan
+        // window of up to 250 rows — and it lowercases the title, subjects and
+        // description each time.
+        return { resource, useCount: r.UseCount, score: matchScore(resource, options.query) };
+      })
       .sort((left, right) => {
-        const scoreDiff = matchScore(right.resource, options.query) - matchScore(left.resource, options.query);
+        const scoreDiff = right.score - left.score;
         if (scoreDiff !== 0) return scoreDiff;
         const useCountDiff = right.useCount - left.useCount;
         if (useCountDiff !== 0) return useCountDiff;

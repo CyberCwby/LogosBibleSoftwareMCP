@@ -103,6 +103,18 @@ describe("parseAutomationOutput", () => {
     expect(parsed.pages).toEqual(["QQ=="]);
   });
 
+  it("normalizes a single collapsed availableTabs entry back into an array (L1)", async () => {
+    // ConvertTo-Json collapses a one-element array to a scalar. `pages` was
+    // normalized; `availableTabs` was not — so with exactly one open tab and a
+    // non-matching tab_name, `.length > 0` was true (string length) and
+    // `.join(", ")` threw a TypeError, replacing the helpful "Open tabs: ESV"
+    // message with a crash.
+    const { parseAutomationOutput } = await import("../src/services/ui-automation-reader.js");
+    const parsed = parseAutomationOutput('{"success":false,"error":"No matching document","availableTabs":"ESV"}');
+
+    expect(parsed.availableTabs).toEqual(["ESV"]);
+  });
+
   it("throws with an excerpt when no JSON is present", async () => {
     const { parseAutomationOutput } = await import("../src/services/ui-automation-reader.js");
     expect(() => parseAutomationOutput("powershell exploded")).toThrow(/No JSON in PowerShell output/);
@@ -240,5 +252,59 @@ describe("readResourceText", () => {
     const { readResourceText } = await import("../src/services/ui-automation-reader.js");
 
     await expect(readResourceText()).rejects.toThrow(/PowerShell execution failed.*assembly not found/s);
+  });
+
+  it("gives a single open tab as an array in the helpful error (L1)", async () => {
+    platformMock.mockReturnValue("win32");
+    respondWith(JSON.stringify({
+      success: false,
+      error: "No matching document found for tab filter",
+      availableTabs: "ESV",   // ConvertTo-Json collapsed the one-element array
+    }));
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    await expect(readResourceText("Calvin")).rejects.toThrow(/Open tabs: ESV/);
+  });
+
+  it("serializes overlapping reads against the single foreground window (M4)", async () => {
+    // Two concurrent calls each ran SetForegroundWindow + SendKeys "{PGDN}"
+    // against the SAME window, so each captured pages the other had scrolled
+    // past and mergePages produced garbled text for both — with success: true.
+    platformMock.mockReturnValue("win32");
+    let inFlight = 0;
+    let maxInFlight = 0;
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      setTimeout(() => {
+        inFlight -= 1;
+        callback(null, JSON.stringify({ success: true, tabName: "ESV", pages: [b64("page text")] }), "");
+      }, 20);
+    });
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    await Promise.all([readResourceText("A"), readResourceText("B"), readResourceText("C")]);
+    expect(maxInFlight).toBe(1);
+    expect(execFileMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("a failed read does not poison the queue for the next caller (M4)", async () => {
+    platformMock.mockReturnValue("win32");
+    let call = 0;
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      call += 1;
+      if (call === 1) {
+        callback(new Error("spawn failed"), "", "boom");
+        return;
+      }
+      callback(null, JSON.stringify({ success: true, tabName: "ESV", pages: [b64("second call")] }), "");
+    });
+    const { readResourceText } = await import("../src/services/ui-automation-reader.js");
+
+    const [first, second] = await Promise.allSettled([readResourceText("A"), readResourceText("B")]);
+    expect(first.status).toBe("rejected");
+    expect(second.status).toBe("fulfilled");
   });
 });

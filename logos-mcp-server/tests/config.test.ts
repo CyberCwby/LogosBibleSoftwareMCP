@@ -178,4 +178,33 @@ describe("config", () => {
 
     expect(() => config.getLogosDataDir()).toThrow(/Could not uniquely determine/);
   });
+
+  it("tells a Linux user the truth instead of naming a macOS path (L4)", async () => {
+    // The non-Windows branch was unconditional, so the error read
+    // "/home/them/Library/Application Support/Logos4/… not found" — a macOS
+    // path that has never existed on their machine, which reads as "Logos is
+    // installed wrong" rather than "Logos does not run here".
+    platformMock.mockReturnValue("linux");
+    homedirMock.mockReturnValue("/home/tester");
+
+    const config = await import("../src/config.js");
+
+    expect(() => config.getLogosDataDir()).toThrow(/require Windows or macOS/);
+    expect(() => config.getLogosDataDir()).toThrow(/LOGOS_DATA_DIR/);
+    expect(() => config.getLogosDataDir()).not.toThrow(/Library\/Application Support/);
+    // and it never touched the filesystem looking for a folder that cannot exist
+    expect(readdirSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("still resolves the macOS path on darwin", async () => {
+    platformMock.mockReturnValue("darwin");
+    readdirSyncMock.mockReturnValue([dirEntry("mac-hash")]);
+    existsSyncMock.mockReturnValue(true);
+
+    const config = await import("../src/config.js");
+
+    expect(config.getLogosDataDir()).toBe(
+      join("/Users/tester", "Library", "Application Support", "Logos4", "Documents", "mac-hash")
+    );
+  });
 });

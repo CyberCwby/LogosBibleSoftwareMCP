@@ -13,7 +13,20 @@ type CacheEntry = {
 const responseCache = new Map<string, CacheEntry>();
 
 export class BibliaApiError extends Error {
-  code: "missing_api_key" | "authentication_failed" | "rate_limited" | "network_error" | "service_unavailable" | "unexpected_response" | "invalid_request";
+  code:
+    | "missing_api_key"
+    | "authentication_failed"
+    | "rate_limited"
+    | "network_error"
+    | "service_unavailable"
+    | "unexpected_response"
+    | "invalid_request"
+    // A 2xx that carried no text: the reference did not resolve in this
+    // version. Distinct from `unexpected_response` so a caller that built the
+    // reference itself (get_passage_context widens a range without knowing the
+    // chapter's length) can retry with a narrower one instead of reporting a
+    // failure the user did not cause.
+    | "passage_not_found";
   status?: number;
   retryAfterSeconds?: number;
 
@@ -83,6 +96,13 @@ function parseRetryAfterSeconds(header: string | null): number | undefined {
   return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
 }
 
+/**
+ * Longest `Retry-After` this client will actually wait out, in seconds.
+ * Anything longer is reported to the caller instead of slept through — see
+ * the 429 branch in `bibliaFetch`.
+ */
+const MAX_RETRY_AFTER_SECONDS = 10;
+
 function shouldRetry(status: number): boolean {
   return status === 429 || status >= 500;
 }
@@ -140,7 +160,17 @@ async function bibliaFetch(path: string, params: Record<string, string>): Promis
       }
 
       if (res.status === 429) {
-        if (attempt < MAX_RETRIES) {
+        // Honour Retry-After only up to MAX_RETRY_AFTER_SECONDS. The server
+        // (or any CDN/proxy answering 429) can send `Retry-After: 86400`, or
+        // an HTTP-date hours ahead, and this loop used to sleep for exactly
+        // that — twice. MCP stdio has no per-tool timeout, so the client just
+        // appeared hung and the user never saw the rate-limit message, which
+        // is only thrown once the retries are exhausted. Past the cap, skip
+        // the retry and throw now: the error already carries
+        // `retryAfterSeconds` so the caller can decide for itself.
+        const waitTooLong =
+          retryAfterSeconds !== undefined && retryAfterSeconds > MAX_RETRY_AFTER_SECONDS;
+        if (attempt < MAX_RETRIES && !waitTooLong) {
           const delayMs = retryAfterSeconds ? retryAfterSeconds * 1000 : 500 * 2 ** attempt;
           await sleep(delayMs);
           continue;
@@ -220,7 +250,7 @@ export async function getBibleText(
   // Surface that as an error instead of a silent empty "success".
   if (trimmed.length === 0) {
     throw new BibliaApiError(
-      "unexpected_response",
+      "passage_not_found",
       `The Biblia API returned no text for "${passage}" (${bibleId}). The passage was not recognized — check the reference (book, chapter, and verse range) and that it exists in this Bible version.`
     );
   }

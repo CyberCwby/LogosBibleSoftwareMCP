@@ -1,9 +1,15 @@
 node_modules/
 dist/
 .env
+
+# Every MCP client config, wherever it lives. `.mcp.json` alone matched only a
+# file with that literal name in the root — but the README tells users to put
+# their BIBLIA_API_KEY inline into `.vscode/mcp.json` and `.cursor/mcp.json`,
+# and presents them as normal in-repo files. A contributor following that and
+# running `git add -A` published their key.
+**/mcp.json
 .mcp.json
 *.db
 .DS_Store
-.claude/agents/
 .worktrees/
 logos-mcp-server/data/*.gz

@@ -131,3 +131,31 @@ Correct but wasteful; precompute the score once per row into the mapped entry (w
 - **Schema correctness:** all 26 registered tools carry described zod schemas with sensible bounds (`limitSchema` min/max everywhere a limit exists); defaults in descriptions match handler defaults (spot-checked all 26); `get_resource_text`'s clamp (1–50) matches its schema.
 - **`scripts/fetch-cross-references.mjs`:** hand-rolled single-entry ZIP reader is offset-checked with explicit signature validation and now has fixture tests; HTTPS download, dev-time only. (No integrity pin on the downloaded dataset — acceptable for CC-BY data fetched by an operator.)
 - **Prior-audit regressions:** all High/Medium/Low items from 2026-08-12 were re-verified as fixed at their cited sites, with regression tests present (apostrophe truncation, catalog scan window, temp-script uniqueness, unverified-launch wording, LIKE escaping, empty Biblia body, arg redaction, resource-read boundary, chapter-only context labeling, `-TabName` binding, `.env` loading).
+
+---
+
+## Resolution (2026-08-26)
+
+Every finding is addressed in the commit that carries this section. `tsc
+--noEmit`, `npm run build` and `npm test` are green — **250 tests**, up from
+237. The repo also gains the CI workflow the summary flagged as missing:
+`.github/workflows/ci.yml` runs `npm ci`, typecheck, build and tests on every
+PR and push to `main`, with no API key configured (the suite mocks `fetch`, and
+a job needing a real key would either leak one into a fork's logs or fail every
+fork PR).
+
+| Finding | Resolution |
+|---|---|
+| **M1** | `.gitignore` matches `**/mcp.json`, so `.vscode/mcp.json` and `.cursor/mcp.json` are ignored alongside `.mcp.json` (verified with `git check-ignore`). The README gains a callout above the client configs saying the key lands in an ignored file, and pointing at VS Code's `${input:...}` prompt and the environment as key-free alternatives; the project-structure listing marks both files gitignored. |
+| **M2** | The entity-decoding chain is factored into an exported `decodeXmlEntities` and applied to every XAML `Text=` attribute value, not just to `stripXml`'s output. `&` *must* be escaped in an XML attribute, so this affected every note containing an ampersand — and `get_user_notes`' full-text filter runs over this content, so searching for "Faith & Works" missed a note that contains exactly that. The existing test that pinned the escaped form is inverted, with new cases for `&amp;`, `&quot;`, `&lt;`/`&gt;`, `&apos;`, and the doubly-escaped `&amp;lt;` that must decode exactly once. |
+| **M3** | `MAX_RETRY_AFTER_SECONDS = 10`. A larger advertised wait skips the retry and throws `rate_limited` immediately — the error already carries `retryAfterSeconds`, so the caller can decide. Tested with `Retry-After: 86400`: one request, no sleep, and the in-cap path still retries. |
+| **M4** | `readResourceText` runs behind a module-level promise chain. The foreground Logos window is inherently exclusive, and two overlapping calls each ran `SetForegroundWindow` + `SendKeys "{PGDN}"` against it. The chain is attached so a rejection cannot poison it for the next caller; both properties are tested (max concurrency 1, and a failed read followed by a successful one). |
+| **L1** | `parseAutomationOutput` normalizes `availableTabs` the way it already normalized `pages`. With one open tab and a non-matching filter, `.join(", ")` on a string threw a `TypeError` in the one branch that exists to be helpful. |
+| **L2** | Targets are excluded by `referencesIntersect` against the parsed source, not by deleting one formatted string, so `get_cross_references("Romans 8:28-30")` no longer lists Romans 8:29 among its own cross-references. A target the parser cannot read is kept, which is what happened before. New fixture and three tests. |
+| **L3** | `getPassageLists` groups on the list **id** (already resolved as `listIdCol`), keeping the title for display, so two lists named "Sermon prep" stay two lists. The schema-fallback path no longer applies the caller's `limit` — which counts *lists* — as a SQL row cap over *passages*; it uses a `FALLBACK_ROW_SCAN` safety bound instead. |
+| **L4** | `getLogosBaseDir` returns `null` off Windows/macOS and the caller says "local Logos data tools require Windows or macOS — Logos does not run on linux; set LOGOS_DATA_DIR if you have a copy of the data". No filesystem call is made for a path that cannot exist. Tested in both directions. |
+| **L5** | `.claude/agents/` is out of `.gitignore`, so a newly added agent is visible to `git add` rather than needing `-f`. |
+| **L6** | Rather than hand-entering per-chapter verse counts (data this project would rightly refuse to type from memory), the empty-body guard gained its own error code `passage_not_found`, and `get_passage_context` catches exactly that to retry the reference as given — reporting "without added context (the N-verse window ran past the end of the chapter)". Reduced context beats a false "passage was not recognized" for a reference the user wrote correctly. A verse-count table remains the fuller fix. |
+| **L7** | `ReferenceFormats`, `BibliaParseResult` and `FavoriteFolder` are deleted — they advertised capabilities the server does not have, `FavoriteFolder` doubly so. `getFavorites` now documents that its inner `JOIN Items` excludes folders, which is the user-visible fact the type was gesturing at. `toHumanReadable` is **kept** with a note: it is small, correct, covered, and it *is* a capability rather than a claim about one. |
+| **L8** | `get_bible_text` uses `Promise.allSettled` and de-duplicates the version list, so a comparison survives one bad version id and reports the failures under an "Unavailable" heading. All-versions-failed still throws, because that is a failure and not an empty comparison. |
+| **L9** | Catalog relevance is scored once per row into the mapped entry, beside `useCount`, instead of twice per sort comparison. |

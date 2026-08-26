@@ -388,6 +388,12 @@ export function toBibleMilestone(input: string): string {
 }
 
 // ─── toHumanReadable ────────────────────────────────────────────────────────
+//
+// A public utility of this module with no in-repo caller today (tests only).
+// Kept rather than deleted: it is small, correct and covered, and converting a
+// Logos-format reference back to a readable one is exactly what a consumer of
+// this parser needs. Unlike the types removed alongside it, it does not claim
+// a capability the server lacks — it IS the capability.
 
 export function toHumanReadable(logosRef: string): string {
   const trimmed = logosRef.trim();

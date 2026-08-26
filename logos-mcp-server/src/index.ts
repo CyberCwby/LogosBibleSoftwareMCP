@@ -156,9 +156,36 @@ export function registerTools(server: McpServer) {
     annotations: CALLS_BIBLIA_API,
   }, async ({ passage, bible, bibles }: { passage: string; bible?: string; bibles?: string[] }) => {
     if (bibles && bibles.length > 0) {
-      const results = await Promise.all(bibles.map((version) => getBibleText(passage, version)));
-      const sections = results.map((r) => `## ${r.bible}\n\n${r.text}`);
-      return text(`**${passage}** in ${results.length} versions:\n\n${sections.join("\n\n")}`);
+      // allSettled, not all: one invalid version id or one transient API
+      // failure used to reject the whole comparison and discard the versions
+      // that DID succeed — in the tool that exists precisely to compare across
+      // versions of uneven availability. Duplicates are collapsed so a repeated
+      // id is not fetched and rendered twice.
+      const versions = [...new Set(bibles)];
+      const settled = await Promise.allSettled(
+        versions.map((version) => getBibleText(passage, version))
+      );
+      const sections: string[] = [];
+      const failures: string[] = [];
+      settled.forEach((outcome, i) => {
+        if (outcome.status === "fulfilled") {
+          sections.push(`## ${outcome.value.bible}\n\n${outcome.value.text}`);
+        } else {
+          failures.push(`- **${versions[i]}**: ${formatToolFailure(outcome.reason)}`);
+        }
+      });
+      if (sections.length === 0) {
+        // Nothing came back: this is a failure, not an empty comparison.
+        throw new Error(
+          `No version of "${passage}" could be retrieved.\n${failures.join("\n")}`
+        );
+      }
+      const body = `**${passage}** in ${sections.length} version${sections.length === 1 ? "" : "s"}:\n\n${sections.join("\n\n")}`;
+      return text(
+        failures.length > 0
+          ? `${body}\n\n### Unavailable\n\n${failures.join("\n")}`
+          : body
+      );
     }
     const result = await getBibleText(passage, bible);
     return text(`**${result.passage}** (${result.bible})\n\n${result.text}`);
@@ -184,8 +211,24 @@ export function registerTools(server: McpServer) {
       );
     }
     const expanded = expandRange(passage, context_verses ?? 5);
-    const result = await getBibleText(expanded, bible);
-    return text(`**${result.passage}** (${result.bible}) — context around ${passage}\n\n${result.text}`);
+    // `expandRange` has no chapter-length data, so the end verse it asks for
+    // can run past the end of the chapter (John 3:34 with 5 verses of context
+    // requests John 3:29-41, though John 3 has 36 verses). Biblia usually
+    // clamps such a range; when it instead resolves it to nothing, the
+    // deliberate empty-body guard turns a legitimate request into "passage was
+    // not recognized". Retry the reference as given rather than failing —
+    // reduced context beats a false error, and the label says which happened.
+    try {
+      const result = await getBibleText(expanded, bible);
+      return text(`**${result.passage}** (${result.bible}) — context around ${passage}\n\n${result.text}`);
+    } catch (err) {
+      if (!(err instanceof BibliaApiError) || err.code !== "passage_not_found") throw err;
+      const result = await getBibleText(passage, bible);
+      return text(
+        `**${result.passage}** (${result.bible}) — ${passage} without added context ` +
+        `(the ${context_verses ?? 5}-verse window ran past the end of the chapter)\n\n${result.text}`
+      );
+    }
   });
 
   // ── 4. search_bible ──────────────────────────────────────────────────────

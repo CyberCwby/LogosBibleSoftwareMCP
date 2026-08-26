@@ -25,6 +25,11 @@ function openDb(path: string): Database.Database {
 // scan up to this many candidate rows before applying the limit.
 const REFERENCE_SCAN_LIMIT = 5000;
 
+// Row ceiling for getPassageLists' schema-fallback path, which cannot group by
+// list and so returns one synthetic list. A safety bound on an unbounded
+// table scan — NOT the caller's `limit`, which counts lists, not passages.
+const FALLBACK_ROW_SCAN = 5000;
+
 // ─── Highlights ──────────────────────────────────────────────────────────────
 
 export function getUserHighlights(options: {
@@ -78,6 +83,13 @@ export function getUserHighlights(options: {
 
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
+/**
+ * Favorite ITEMS only. The inner `JOIN Items` means favorite *folders* — which
+ * have no Items row — are excluded, so the returned list is flat and a folder
+ * the user sees in Logos does not appear here. That is the current behaviour,
+ * stated rather than left to be discovered; a `FavoriteFolder` type used to sit
+ * in types.ts describing a tree this function never builds.
+ */
 export function getFavorites(limit?: number): FavoriteResult[] {
   const db = openDb(getDbPaths().favorites);
   try {
@@ -470,8 +482,14 @@ export function getPassageLists(options: { limit?: number } = {}): PassageListRe
       const listDeletedCol = pickColumn(listColumns, ["IsDeleted"]);
 
       if (listIdCol) {
+        // Select the list ID as well as its title: grouping keyed on the
+        // TITLE merged two genuinely distinct lists that happen to share a
+        // name (two "Sermon prep" lists became one entry), and the id was
+        // already resolved right here.
         let sql = `
-          SELECT l.${quoteIdent(listTitleCol)} AS ListTitle, i.${quoteIdent(referenceCol)} AS Ref
+          SELECT l.${quoteIdent(listIdCol)} AS ListId,
+                 l.${quoteIdent(listTitleCol)} AS ListTitle,
+                 i.${quoteIdent(referenceCol)} AS Ref
           FROM ${quoteIdent(itemsTable)} i
           JOIN ${quoteIdent(listTable)} l ON i.${quoteIdent(listKeyCol)} = l.${quoteIdent(listIdCol)}
         `;
@@ -480,25 +498,37 @@ export function getPassageLists(options: { limit?: number } = {}): PassageListRe
         if (listDeletedCol) conditions.push(`l.${quoteIdent(listDeletedCol)} = 0`);
         if (conditions.length > 0) sql += ` WHERE ${conditions.join(" AND ")}`;
 
-        const rows = db.prepare(sql).all() as Array<{ ListTitle: string | null; Ref: string | null }>;
-        const grouped = new Map<string, string[]>();
+        const rows = db.prepare(sql).all() as Array<{
+          ListId: string | number | null;
+          ListTitle: string | null;
+          Ref: string | null;
+        }>;
+        const grouped = new Map<string, { title: string; passages: string[] }>();
         for (const row of rows) {
-          const key = row.ListTitle ?? "(untitled list)";
-          const passages = grouped.get(key) ?? [];
-          passages.push(...decodePassage(row.Ref));
-          grouped.set(key, passages);
+          const key = String(row.ListId ?? row.ListTitle ?? "(untitled list)");
+          const entry = grouped.get(key) ?? {
+            title: row.ListTitle ?? "(untitled list)",
+            passages: [],
+          };
+          entry.passages.push(...decodePassage(row.Ref));
+          grouped.set(key, entry);
         }
-        return Array.from(grouped.entries())
-          .map(([title, passages]) => ({ title, passages }))
-          .slice(0, options.limit ?? 25);
+        return Array.from(grouped.values()).slice(0, options.limit ?? 25);
       }
     }
 
-    // Fallback: flat dump of the items table
+    // Fallback: flat dump of the items table.
+    //
+    // NOTE: `limit` means "max passage LISTS" (its documented meaning) in the
+    // join path above, and this path produces at most one synthetic list — so
+    // it must not also apply `limit` as a SQL row cap, which silently
+    // truncated the passages inside that single list. The row scan is bounded
+    // by FALLBACK_ROW_SCAN instead, a safety ceiling rather than the caller's
+    // list limit.
     let sql = `SELECT ${quoteIdent(referenceCol)} AS Ref FROM ${quoteIdent(itemsTable)}`;
     if (itemDeletedCol) sql += ` WHERE ${quoteIdent(itemDeletedCol)} = 0`;
     sql += " LIMIT ?";
-    const rows = db.prepare(sql).all(options.limit ?? 200) as Array<{ Ref: string | null }>;
+    const rows = db.prepare(sql).all(FALLBACK_ROW_SCAN) as Array<{ Ref: string | null }>;
     const passages = rows.flatMap((r) => decodePassage(r.Ref));
     return passages.length > 0 ? [{ title: null, passages }] : [];
   } finally {

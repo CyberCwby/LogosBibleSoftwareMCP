@@ -4,17 +4,26 @@ import { join } from "path";
 
 // ─── Logos Data Paths ────────────────────────────────────────────────────────
 
-function getLogosBaseDir(subdir: "Documents" | "Data"): string {
-  let base: string;
+/**
+ * The default Logos base directory for this platform, or null where Logos does
+ * not run.
+ *
+ * The `else` branch used to be unconditional, so a Linux user's error named
+ * `/home/them/Library/Application Support/Logos4/…` — a macOS path that has
+ * never existed on their machine, and reads as "Logos is installed wrong"
+ * rather than "Logos does not run here". Returning null lets the caller say
+ * the true thing.
+ */
+function getLogosBaseDir(subdir: "Documents" | "Data"): string | null {
   if (platform() === "win32") {
     const localAppData =
       process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    base = join(localAppData, "Logos", subdir);
-  } else {
-    base = join(homedir(), "Library", "Application Support", "Logos4", subdir);
+    return join(localAppData, "Logos", subdir);
   }
-
-  return base;
+  if (platform() === "darwin") {
+    return join(homedir(), "Library", "Application Support", "Logos4", subdir);
+  }
+  return null;
 }
 
 /**
@@ -30,6 +39,13 @@ function resolveLogosDir(
   envVarName: "LOGOS_DATA_DIR" | "LOGOS_CATALOG_DIR"
 ): string {
   const base = getLogosBaseDir(subdir);
+  if (base === null) {
+    throw new Error(
+      `Local Logos data tools require Windows or macOS — Logos Bible Software ` +
+      `does not run on ${platform()}. If you have a copy of the data on this ` +
+      `machine, set ${envVarName} to the folder containing it.`
+    );
+  }
 
   let entries;
   try {
